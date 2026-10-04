@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Department extends Model
 {
+    use BelongsToCompany;
     protected $fillable = [
         'company_id', 'parent_id', 'manager_id',
         'name', 'name_ar', 'code', 'color', 'sort_order', 'is_active',

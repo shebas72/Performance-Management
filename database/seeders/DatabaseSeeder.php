@@ -298,5 +298,6 @@ class DatabaseSeeder extends Seeder
         $this->command->info('   KPIs:    12 strategic KPIs with 8 months of data');
 
         $this->call(SuperAdminSeeder::class);
+        $this->call(RolesSeeder::class);
     }
 }

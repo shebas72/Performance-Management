@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToCompany;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -9,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Kpi extends Model
 {
+    use BelongsToCompany;
     protected $fillable = [
         'company_id', 'strategic_objective_id', 'bsc_perspective_id',
         'department_id', 'owner_id', 'created_by',
