@@ -46,5 +46,6 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('departments', DepartmentController::class);
         Route::apiResource('kpis', KpiController::class);
         Route::apiResource('kpi-targets', KpiTargetController::class);
+        Route::put('perspectives/weights', [BscPerspectiveController::class, 'updateWeights']);
     });
 });
