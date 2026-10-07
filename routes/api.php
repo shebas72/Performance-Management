@@ -11,6 +11,9 @@ use App\Http\Controllers\Api\V1\StrategicObjectiveController;
 use App\Http\Controllers\Api\V1\StrategyHouseController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\CorrectiveProposalController;
+use App\Http\Controllers\Api\V1\ProjectController;
+use App\Http\Controllers\Api\V1\InitiativeController;
 
 
 Route::prefix('v1')->group(function () {
@@ -47,5 +50,30 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('kpis', KpiController::class);
         Route::apiResource('kpi-targets', KpiTargetController::class);
         Route::put('perspectives/weights', [BscPerspectiveController::class, 'updateWeights']);
+        Route::get('corrective-proposals', [CorrectiveProposalController::class, 'index']);
+        Route::post('corrective-proposals', [CorrectiveProposalController::class, 'store']);
+        Route::put('corrective-proposals/{id}', [CorrectiveProposalController::class, 'update'])->whereNumber('id');
+        Route::delete('corrective-proposals/{id}', [CorrectiveProposalController::class, 'destroy'])->whereNumber('id');
+        Route::post('corrective-proposals/{id}/review', [CorrectiveProposalController::class, 'review'])->whereNumber('id');
+        Route::get('dashboard/projects', [ProjectController::class, 'performance']);
+        Route::get('projects', [ProjectController::class, 'index']);
+        Route::post('projects', [ProjectController::class, 'store']);
+        Route::get('projects/{id}', [ProjectController::class, 'show'])->whereNumber('id');
+        Route::put('projects/{id}', [ProjectController::class, 'update'])->whereNumber('id');
+        Route::delete('projects/{id}', [ProjectController::class, 'destroy'])->whereNumber('id');
+        Route::put('projects/{id}/progress', [ProjectController::class, 'progress'])->whereNumber('id');
+
+        Route::get('dashboard/initiatives', [InitiativeController::class, 'performance']);
+        Route::get('initiatives', [InitiativeController::class, 'index']);
+        Route::post('initiatives', [InitiativeController::class, 'store']);
+        Route::get('initiatives/{id}', [InitiativeController::class, 'show'])->whereNumber('id');
+        Route::put('initiatives/{id}', [InitiativeController::class, 'update'])->whereNumber('id');
+        Route::delete('initiatives/{id}', [InitiativeController::class, 'destroy'])->whereNumber('id');
+        Route::put('initiatives/{id}/progress', [InitiativeController::class, 'progress'])->whereNumber('id');
+        Route::post('initiatives/{id}/tasks', [InitiativeController::class, 'storeTask'])->whereNumber('id');
+        Route::put('execution-plan-tasks/{id}', [InitiativeController::class, 'updateTask'])->whereNumber('id');
+        Route::delete('execution-plan-tasks/{id}', [InitiativeController::class, 'destroyTask'])->whereNumber('id');
+                
+        
     });
 });
