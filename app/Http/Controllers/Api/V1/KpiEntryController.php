@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\Kpi;
 use App\Models\KpiEntry;
+use App\Services\KpiChangeLogger;
 use App\Services\KpiEntryService;
 use App\Services\SnapshotService;
 use Illuminate\Http\Request;
@@ -21,6 +22,7 @@ class KpiEntryController extends Controller
     public function __construct(
         private KpiEntryService $entries,
         private SnapshotService $snapshots,
+        private KpiChangeLogger $changes,
     ) {}
 
     public function index(Request $request)
@@ -112,6 +114,7 @@ class KpiEntryController extends Controller
         [$year, $month] = [(int) $entry->year, (int) $entry->month];
 
         $entry->delete();
+        $this->changes->entryDeleted($entry, $request->user()->id);
         $this->snapshots->refreshMonth($cid, $year, $month);
 
         return response()->noContent();

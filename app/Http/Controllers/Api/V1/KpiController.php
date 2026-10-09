@@ -3,11 +3,15 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Kpi;
+use App\Services\KpiChangeLogger;
 use Illuminate\Support\Facades\Auth;
 
 class KpiController extends CompanyResourceController
 {
     protected string $model = Kpi::class;
+
+    public function __construct(private KpiChangeLogger $changes) {}
+
     protected array $searchable = ['name', 'name_ar', 'code'];
     protected array $filterable = [
         'strategic_objective_id', 'bsc_perspective_id', 'department_id',
@@ -50,5 +54,15 @@ class KpiController extends CompanyResourceController
         $data['created_by'] = Auth::id();
 
         return $data;
+    }
+
+    protected function afterCreate($record): void
+    {
+        $this->changes->kpiCreated($record, Auth::id());
+    }
+
+    protected function afterUpdate($record, array $before): void
+    {
+        $this->changes->kpiUpdated($record, $before, Auth::id());
     }
 }

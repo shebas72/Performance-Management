@@ -10,7 +10,7 @@ use Illuminate\Validation\ValidationException;
 
 class KpiEntryService
 {
-    public function __construct(private KpiCalculator $calc) {}
+    public function __construct(private KpiCalculator $calc, private KpiChangeLogger $log) {}
 
     /**
      * Create or update the entry for (kpi, year, month) and compute achievement + status.
@@ -76,9 +76,12 @@ class KpiEntryService
             if (array_key_exists($f, $data)) $attrs[$f] = $data[$f];
         }
 
-        return KpiEntry::updateOrCreate(
-            ['kpi_id' => $kpi->id, 'year' => $year, 'month' => $month],
-            $attrs
-        );
+        $key    = ['kpi_id' => $kpi->id, 'year' => $year, 'month' => $month];
+        $before = KpiEntry::where($key)->first()?->only(KpiChangeLogger::ENTRY_FIELDS);
+
+        $entry = KpiEntry::updateOrCreate($key, $attrs);
+        $this->log->entrySaved($kpi, $before, $entry, $user->id);
+
+        return $entry;
     }
 }

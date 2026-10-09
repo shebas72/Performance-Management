@@ -33,6 +33,11 @@ abstract class CompanyResourceController extends Controller
     return $data;
 }
 
+    /** Hooks for audit logging etc. No-ops by default. $before = raw attributes prior to the update. */
+    protected function afterCreate($record): void {}
+    protected function afterUpdate($record, array $before): void {}
+    protected function afterDelete($record): void {}
+
 
     public function index(Request $request)
     {
@@ -73,6 +78,7 @@ abstract class CompanyResourceController extends Controller
     $class = $this->model;
     $record = new $class();
     $record->forceFill($data)->save();
+    $this->afterCreate($record);
 
     return (new GenericResource($record->load($this->with)))
         ->response()
@@ -84,12 +90,14 @@ public function update(Request $request, $id)
     $this->authorizeWrite($request);
 
     $record = ($this->model)::findOrFail($id);
+    $before = $record->getAttributes();
 
     $rules = collect($this->rules())
         ->map(fn ($r) => array_merge(['sometimes'], (array) $r))
         ->all();
 
     $record->forceFill($request->validate($rules))->save();
+    $this->afterUpdate($record, $before);
 
     return new GenericResource($record->fresh($this->with));
 }
@@ -107,6 +115,8 @@ public function update(Request $request, $id)
                 'message' => 'This record is in use and cannot be deleted.',
             ], 409);
         }
+
+        $this->afterDelete($record);
 
         return response()->noContent();
     }

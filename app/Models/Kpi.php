@@ -35,6 +35,7 @@ class Kpi extends Model
     public function perspective(): BelongsTo        { return $this->belongsTo(BscPerspective::class, 'bsc_perspective_id'); }
     public function department(): BelongsTo         { return $this->belongsTo(Department::class); }
     public function owner(): BelongsTo              { return $this->belongsTo(User::class, 'owner_id'); }
+    public function creator(): BelongsTo            { return $this->belongsTo(User::class, 'created_by'); }
     public function targets(): HasMany              { return $this->hasMany(KpiTarget::class)->orderBy('month'); }
     public function entries(): HasMany              { return $this->hasMany(KpiEntry::class)->orderBy('month'); }
     public function correctiveProposals(): HasMany  { return $this->hasMany(CorrectiveProposal::class); }

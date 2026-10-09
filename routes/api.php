@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\CoreValueController;
 use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\KpiController;
 use App\Http\Controllers\Api\V1\KpiEntryController;
+use App\Http\Controllers\Api\V1\KpiHistoryController;
 use App\Http\Controllers\Api\V1\KpiTargetController;
 use App\Http\Controllers\Api\V1\StrategicObjectiveController;
 use App\Http\Controllers\Api\V1\StrategyHouseController;
@@ -14,6 +15,8 @@ use App\Http\Controllers\Api\V1\DashboardController;
 use App\Http\Controllers\Api\V1\CorrectiveProposalController;
 use App\Http\Controllers\Api\V1\ProjectController;
 use App\Http\Controllers\Api\V1\InitiativeController;
+use App\Http\Controllers\Api\V1\{TeamController, CompanyController};
+use App\Http\Controllers\Api\V1\ProfileController;
 
 
 Route::prefix('v1')->group(function () {
@@ -21,6 +24,8 @@ Route::prefix('v1')->group(function () {
     // Public
     Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+    Route::get('auth/invitations/{token}', [TeamController::class, 'showInvite'])->middleware('throttle:20,1');
+    Route::post('auth/accept-invite', [TeamController::class, 'accept'])->middleware('throttle:10,1');
    
 
     // Authenticated (Sanctum token)
@@ -44,12 +49,13 @@ Route::prefix('v1')->group(function () {
         Route::put('strategy-house', [StrategyHouseController::class, 'update']);
 
         Route::apiResource('core-values', CoreValueController::class);
+        Route::put('perspectives/weights', [BscPerspectiveController::class, 'updateWeights']);
         Route::apiResource('perspectives', BscPerspectiveController::class);
         Route::apiResource('objectives', StrategicObjectiveController::class);
         Route::apiResource('departments', DepartmentController::class);
         Route::apiResource('kpis', KpiController::class);
         Route::apiResource('kpi-targets', KpiTargetController::class);
-        Route::put('perspectives/weights', [BscPerspectiveController::class, 'updateWeights']);
+        Route::get('kpis/{id}/history', [KpiHistoryController::class, 'index'])->whereNumber('id');
         Route::get('corrective-proposals', [CorrectiveProposalController::class, 'index']);
         Route::post('corrective-proposals', [CorrectiveProposalController::class, 'store']);
         Route::put('corrective-proposals/{id}', [CorrectiveProposalController::class, 'update'])->whereNumber('id');
@@ -73,6 +79,19 @@ Route::prefix('v1')->group(function () {
         Route::post('initiatives/{id}/tasks', [InitiativeController::class, 'storeTask'])->whereNumber('id');
         Route::put('execution-plan-tasks/{id}', [InitiativeController::class, 'updateTask'])->whereNumber('id');
         Route::delete('execution-plan-tasks/{id}', [InitiativeController::class, 'destroyTask'])->whereNumber('id');
+        Route::get('users', [TeamController::class, 'users']);
+        Route::put('users/{id}', [TeamController::class, 'updateUser'])->whereNumber('id');
+        Route::get('invitations', [TeamController::class, 'invitations']);
+        Route::post('invitations', [TeamController::class, 'invite']);
+        Route::post('invitations/{id}/resend', [TeamController::class, 'resend'])->whereNumber('id');
+        Route::delete('invitations/{id}', [TeamController::class, 'revoke'])->whereNumber('id');
+        Route::get('company', [CompanyController::class, 'show']);
+        Route::put('company', [CompanyController::class, 'update']);
+        Route::post('company/logo', [CompanyController::class, 'uploadLogo']);
+        Route::delete('company/logo', [CompanyController::class, 'removeLogo']);
+        Route::post('users', [TeamController::class, 'createUser']);
+        Route::put('auth/profile', [ProfileController::class, 'update']);
+        Route::post('auth/change-password', [ProfileController::class, 'changePassword']);
                 
         
     });

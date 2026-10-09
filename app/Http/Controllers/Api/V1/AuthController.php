@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Spatie\Permission\Models\Role;
 use Illuminate\Support\Str;
@@ -72,6 +73,10 @@ class AuthController extends Controller
             ]);
         }
 
+        if (! (bool) ($user->is_active ?? true)) {
+            throw ValidationException::withMessages(['email' => ['This account has been deactivated. Contact your company admin.']]);
+        }
+
         return response()->json($this->payload($user, $user->createToken('spa')->plainTextToken));
     }
 
@@ -100,7 +105,7 @@ class AuthController extends Controller
         return $slug;
     }
 
-    private function payload(User $user, ?string $token = null): array
+    public function payload(User $user, ?string $token = null): array
     {
         $company = $user->company_id ? Company::find($user->company_id) : null;
 
@@ -114,7 +119,10 @@ class AuthController extends Controller
                 'company_id' => $user->company_id,
                 'roles'      => $user->getRoleNames()->values(),
             ],
-            'company' => $company ? ['id' => $company->id, 'name' => $company->name] : null,
+            'company' => $company ? [
+                'id' => $company->id, 'name' => $company->name, 'name_ar' => $company->name_ar,
+                'logo_url' => $company->logo ? Storage::disk('public')->url($company->logo) : null,
+            ] : null,
         ], fn ($v) => $v !== null);
     }
 }
