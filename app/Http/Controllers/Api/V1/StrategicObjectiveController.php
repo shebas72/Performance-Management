@@ -9,6 +9,7 @@ class StrategicObjectiveController extends CompanyResourceController
 {
     protected string $model = StrategicObjective::class;
     protected array $filterable = ['bsc_perspective_id'];
+    protected array $writeRoles = ['admin']; // strategy is set by company admins only
 
     protected function rules(): array
     {

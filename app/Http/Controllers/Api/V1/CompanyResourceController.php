@@ -38,10 +38,24 @@ abstract class CompanyResourceController extends Controller
     protected function afterUpdate($record, array $before): void {}
     protected function afterDelete($record): void {}
 
+    /** Narrow every lookup (list, show, update, delete) to what the current user may see. */
+    protected function scoped($query)
+    {
+        return $query;
+    }
+
+    /** Veto or adjust a write: throw (abort) to refuse, or return the data to save. */
+    protected function beforeUpdate($record, array $data): array
+    {
+        return $data;
+    }
+
+    protected function beforeDelete($record): void {}
+
 
     public function index(Request $request)
     {
-        $query = ($this->model)::query()->with($this->with)->orderBy($this->orderBy);
+        $query = $this->scoped(($this->model)::query())->with($this->with)->orderBy($this->orderBy);
 
         foreach ($this->filterable as $field) {
             if ($request->filled($field)) {
@@ -64,7 +78,7 @@ abstract class CompanyResourceController extends Controller
 
     public function show($id)
     {
-        $record = ($this->model)::with($this->with)->findOrFail($id);
+        $record = $this->scoped(($this->model)::query())->with($this->with)->findOrFail($id);
 
         return new GenericResource($record);
     }
@@ -89,14 +103,14 @@ public function update(Request $request, $id)
 {
     $this->authorizeWrite($request);
 
-    $record = ($this->model)::findOrFail($id);
+    $record = $this->scoped(($this->model)::query())->findOrFail($id);
     $before = $record->getAttributes();
 
     $rules = collect($this->rules())
         ->map(fn ($r) => array_merge(['sometimes'], (array) $r))
         ->all();
 
-    $record->forceFill($request->validate($rules))->save();
+    $record->forceFill($this->beforeUpdate($record, $request->validate($rules)))->save();
     $this->afterUpdate($record, $before);
 
     return new GenericResource($record->fresh($this->with));
@@ -106,7 +120,8 @@ public function update(Request $request, $id)
     {
         $this->authorizeWrite($request);
 
-        $record = ($this->model)::findOrFail($id);
+        $record = $this->scoped(($this->model)::query())->findOrFail($id);
+        $this->beforeDelete($record);
 
         try {
             $record->delete();

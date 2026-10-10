@@ -6,11 +6,14 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\Kpi;
 use App\Models\KpiChangeLog;
+use App\Services\AccessScope;
 use Illuminate\Http\Request;
 
 class KpiHistoryController extends Controller
 {
     use ResolvesTenant;
+
+    public function __construct(private AccessScope $access) {}
 
     /** GET /kpis/{id}/history: newest first, plus who created the KPI. */
     public function index(Request $request, int $id)
@@ -19,6 +22,8 @@ class KpiHistoryController extends Controller
         $request->validate(['per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
 
         $kpi = Kpi::withoutGlobalScopes()->with('creator:id,name')->where('company_id', $cid)->findOrFail($id);
+
+        abort_unless($this->access->canView($request->user(), $kpi->department_id === null ? null : (int) $kpi->department_id), 404);
 
         $page = KpiChangeLog::with('user:id,name')
             ->where('company_id', $cid)->where('kpi_id', $kpi->id)

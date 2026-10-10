@@ -13,7 +13,7 @@ class Company extends Model
     protected $fillable = [
         'name', 'name_ar', 'slug', 'logo', 'timezone',
         'default_language', 'plan', 'app_mode',
-        'fiscal_year_start', 'trial_ends_at', 'is_active',
+        'fiscal_year_start', 'trial_ends_at', 'is_active', 'team_report_visibility',
     ];
 
     protected $casts = [

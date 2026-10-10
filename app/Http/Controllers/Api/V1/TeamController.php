@@ -23,7 +23,7 @@ class TeamController extends Controller
 {
     use ResolvesTenant;
 
-    private const ROLES = ['admin', 'manager', 'viewer'];
+    private const ROLES = ['admin', 'manager', 'employee', 'viewer'];
     private const INVITE_DAYS = 7;
 
     /* ---- users ---- */
@@ -32,9 +32,10 @@ class TeamController extends Controller
     {
         $cid = $this->requireAdmin($request);
         $users = User::where('company_id', $cid)->where('is_super_admin', false)->with('roles:id,name')->orderBy('name')->get();
+        $links = DB::table('department_user')->whereIn('user_id', $users->pluck('id'))->get()->groupBy('user_id');
 
         return response()->json([
-            'data' => $users->map(fn ($u) => $this->shapeUser($u))->values(),
+            'data' => $users->map(fn ($u) => $this->shapeUser($u, $links->get($u->id, collect())))->values(),
             'meta' => ['roles' => self::ROLES, 'me' => $request->user()->id],
         ]);
     }
@@ -47,7 +48,7 @@ class TeamController extends Controller
             'role' => ['sometimes', Rule::in(self::ROLES)], 'is_active' => ['sometimes', 'boolean'], 'name' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'password' => ['sometimes', 'string', 'min:8'],
-        ]);
+        ] + $this->accessRules($cid));
         abort_if(isset($data['password']) && $user->id === $request->user()->id, 422, 'Change your own password from your profile.');
 
         $losesAdmin = $user->hasRole('admin') && ((isset($data['role']) && $data['role'] !== 'admin') || (isset($data['is_active']) && ! $data['is_active']));
@@ -69,6 +70,7 @@ class TeamController extends Controller
                 Role::findOrCreate($data['role']);
                 $user->syncRoles([$data['role']]);
             }
+            $this->applyAccess($user, $data);
             if (isset($data['password']) || (isset($data['is_active']) && ! $data['is_active'])) {
                 $user->tokens()->delete(); // signs them out everywhere
             }
@@ -87,7 +89,7 @@ class TeamController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'], 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'role' => ['required', Rule::in(self::ROLES)], 'password' => ['nullable', 'string', 'min:8'],
-        ]);
+        ] + $this->accessRules($cid));
         $plain = $data['password'] ?? Str::password(12, symbols: false);
 
         $user = DB::transaction(function () use ($cid, $data, $plain) {
@@ -98,11 +100,22 @@ class TeamController extends Controller
             ])->save();
             Role::findOrCreate($data['role']);
             $user->assignRole($data['role']);
+            $this->applyAccess($user, $data);
 
             return $user;
         });
 
         return response()->json(['data' => $this->shapeUser($user->load('roles')) + ['temporary_password' => isset($data['password']) ? null : $plain]], 201);
+    }
+
+    /** Names of the active people in the company, for owner/manager pickers. Any signed-in member may read it. */
+    public function lookup(Request $request)
+    {
+        $cid   = $this->companyId($request);
+        $users = User::where('company_id', $cid)->where('is_super_admin', false)->where('is_active', true)
+            ->with('roles:id,name')->orderBy('name')->get(['id', 'name']);
+
+        return response()->json(['data' => $users->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => $u->roles->pluck('name')->first()])->values()]);
     }
 
     /* ---- invitations ---- */
@@ -217,9 +230,53 @@ class TeamController extends Controller
         return $this->shapeInvitation($inv->load('inviter:id,name')) + ['invite_url' => $link, 'emailed' => $sent];
     }
 
-    private function shapeUser(User $u): array
+    private function accessRules(int $cid): array
     {
-        return ['id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $u->roles->pluck('name')->first(), 'is_active' => (bool) ($u->is_active ?? true), 'created_at' => $u->created_at?->toDateString()];
+        $dept = Rule::exists('departments', 'id')->where('company_id', $cid);
+
+        return [
+            'access_scope'          => ['sometimes', Rule::in(['own', 'all', 'selected'])],
+            'manager_id'            => ['sometimes', 'nullable', 'integer', Rule::exists('users', 'id')->where('company_id', $cid)],
+            'department_ids'        => ['sometimes', 'array'],
+            'department_ids.*'      => ['integer', 'distinct', $dept],
+            'access_department_ids' => ['sometimes', 'array'],
+            'access_department_ids.*' => ['integer', 'distinct', $dept],
+        ];
+    }
+
+    /** Scope, manager and department links. Only the keys that were sent are changed. */
+    private function applyAccess(User $user, array $data): void
+    {
+        $fill = [];
+        if (isset($data['access_scope'])) $fill['access_scope'] = $data['access_scope'];
+        if (array_key_exists('manager_id', $data)) {
+            if ($data['manager_id']) {
+                abort_if((int) $data['manager_id'] === $user->id, 422, 'A user cannot be their own manager.');
+                abort_unless(User::find($data['manager_id'])?->hasAnyRole(['admin', 'manager']), 422, 'The manager must have the admin or manager role.');
+            }
+            $fill['manager_id'] = $data['manager_id'] ?: null;
+        }
+        if ($fill) $user->forceFill($fill)->save();
+
+        foreach (['department_ids' => 'member', 'access_department_ids' => 'access'] as $key => $kind) {
+            if (! array_key_exists($key, $data)) continue;
+            DB::table('department_user')->where('user_id', $user->id)->where('kind', $kind)->delete();
+            $rows = collect($data[$key])->unique()->map(fn ($d) => ['user_id' => $user->id, 'department_id' => (int) $d, 'kind' => $kind])->values()->all();
+            if ($rows) DB::table('department_user')->insert($rows);
+        }
+    }
+
+    private function shapeUser(User $u, $links = null): array
+    {
+        $links ??= DB::table('department_user')->where('user_id', $u->id)->get();
+        $ids = fn (string $kind) => $links->where('kind', $kind)->pluck('department_id')->map(fn ($v) => (int) $v)->values();
+
+        return [
+            'id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $u->roles->pluck('name')->first(),
+            'is_active' => (bool) ($u->is_active ?? true), 'created_at' => $u->created_at?->toDateString(),
+            'access_scope' => $u->access_scope ?? 'all', 'manager_id' => $u->manager_id ?? null,
+            'department_ids' => $ids('member'), 'access_department_ids' => $ids('access'),
+        ];
     }
 
     private function shapeInvitation(Invitation $i): array

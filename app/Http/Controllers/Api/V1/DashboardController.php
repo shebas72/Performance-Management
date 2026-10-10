@@ -19,7 +19,7 @@ class DashboardController extends Controller
     public function index(Request $request)
     {
         [$cid, $year, $month] = $this->period($request);
-        $ctx = $this->perf->load($cid, $year);
+        $ctx = $this->perf->load($cid, $year, $request->user());
 
         $scores    = $this->perf->kpiScores($ctx, $month);
         $cur       = $this->perf->rollup($ctx, $scores);
@@ -65,6 +65,13 @@ class DashboardController extends Controller
             'trend'             => $trend,
             'perspectives'      => $perspectives,
             'worst_kpis'        => $worst,
+            // Restricted users see scores for their own departments only; the page labels them with these.
+            'scope'             => [
+                'restricted'  => $ctx['restricted'],
+                'departments' => $ctx['restricted']
+                    ? $ctx['departments']->whereNull('parent_id')->map(fn ($d) => ['id' => $d->id, 'name' => $d->name, 'name_ar' => $d->name_ar])->values()
+                    : [],
+            ],
             'data_completeness' => [
                 'expected' => $total,
                 'entered'  => $entered,
@@ -80,7 +87,7 @@ class DashboardController extends Controller
         [$cid, $year, $month] = $this->period($request);
         $request->validate(['perspective_id' => ['nullable', 'integer']]);
 
-        $ctx = $this->perf->load($cid, $year);
+        $ctx = $this->perf->load($cid, $year, $request->user());
         $cur = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month));
         $ytd = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month, true));
         $persp = $ctx['perspectives']->keyBy('id');
@@ -103,7 +110,7 @@ class DashboardController extends Controller
     {
         [$cid, $year, $month] = $this->period($request);
 
-        $ctx = $this->perf->load($cid, $year);
+        $ctx = $this->perf->load($cid, $year, $request->user());
         $cur = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month));
         $ytd = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month, true));
 
@@ -128,7 +135,7 @@ class DashboardController extends Controller
         ]);
         $ytd = $request->input('basis') === 'ytd';
 
-        $ctx    = $this->perf->load($cid, $year);
+        $ctx    = $this->perf->load($cid, $year, $request->user());
         $scores = $this->perf->kpiScores($ctx, $month, $ytd);
 
         $kpis = $ctx['kpis']

@@ -26,7 +26,7 @@ class StrategyHouseController extends Controller
 
     public function update(Request $request)
     {
-        abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to modify this resource.');
+        abort_unless($request->user()->hasRole('admin'), 403, 'Only company admins can change the strategy.');
 
         $data = $request->validate([
             'year'       => ['nullable', 'integer', 'min:2000', 'max:2100'],

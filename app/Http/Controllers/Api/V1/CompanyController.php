@@ -24,6 +24,7 @@ class CompanyController extends Controller
         $c->forceFill($request->validate([
             'name' => ['required', 'string', 'max:255'], 'name_ar' => ['nullable', 'string', 'max:255'],
             'timezone' => ['nullable', 'timezone:all'], 'default_language' => ['nullable', 'in:en,ar'],
+            'team_report_visibility' => ['sometimes', 'in:colleagues,own'],
         ]))->save();
 
         return response()->json(['data' => $this->shape($c)]);
@@ -72,6 +73,7 @@ class CompanyController extends Controller
         return [
             'id' => $c->id, 'name' => $c->name, 'name_ar' => $c->name_ar, 'timezone' => $c->timezone, 'default_language' => $c->default_language,
             'logo_url' => $c->logo ? Storage::disk('public')->url($c->logo) : null,
+            'team_report_visibility' => $c->team_report_visibility ?? 'colleagues',
         ];
     }
 }

@@ -6,18 +6,22 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\CorrectiveProposal;
 use App\Models\Kpi;
+use App\Services\AccessScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
 
 /**
  * Corrective proposals for under-performing KPIs.
- * Any user can propose; admins/managers review (approve -> in_progress, reject, complete).
+ * Any user can propose for a KPI they can see; admins/managers review (approve -> in_progress, reject, complete)
+ * the proposals of their own departments. Restricted users see their departments' proposals plus the ones they submitted.
  * The model has no tenant scope, so every query below filters on company_id explicitly.
  */
 class CorrectiveProposalController extends Controller
 {
     use ResolvesTenant;
+
+    public function __construct(private AccessScope $access) {}
 
     private const ROOT_CAUSES = ['resources_shortage', 'technical_challenges', 'administrative', 'lack_of_followup', 'other'];
 
@@ -30,8 +34,10 @@ class CorrectiveProposalController extends Controller
             'status' => ['nullable', Rule::in(['pending', 'in_progress', 'completed', 'rejected'])],
         ]);
 
-        $rows = CorrectiveProposal::with(['kpi:id,code,name,name_ar', 'submitter:id,name', 'reviewer:id,name'])
-            ->where('company_id', $this->companyId($request))
+        $rows = $this->access->scopeVisible(
+            CorrectiveProposal::with(['kpi:id,code,name,name_ar', 'submitter:id,name', 'reviewer:id,name'])->where('company_id', $this->companyId($request)),
+            $request->user(), 'department_id', 'submitted_by'
+        )
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->integer('year')))
             ->when($request->filled('month'), fn ($q) => $q->where('month', $request->integer('month')))
             ->when($request->filled('kpi_id'), fn ($q) => $q->where('kpi_id', $request->integer('kpi_id')))
@@ -46,6 +52,7 @@ class CorrectiveProposalController extends Controller
         $cid  = $this->companyId($request);
         $data = $request->validate($this->rules($cid));
         $kpi  = Kpi::where('company_id', $cid)->findOrFail($data['kpi_id']);
+        abort_unless($this->access->canView($request->user(), $kpi->department_id === null ? null : (int) $kpi->department_id), 404);
 
         $p = new CorrectiveProposal();
         $p->forceFill($data + [
@@ -86,6 +93,7 @@ class CorrectiveProposalController extends Controller
 
         $action = $request->validate(['action' => ['required', Rule::in(['approve', 'reject', 'complete'])]])['action'];
         $p      = $this->find($request, $id);
+        abort_unless($this->access->canManage($request->user(), $p->department_id === null ? null : (int) $p->department_id), 403, 'You can only review proposals of your own departments.');
 
         $from = ['approve' => 'pending', 'reject' => 'pending', 'complete' => 'in_progress'][$action];
         abort_unless($p->status === $from, 422, 'This action is not available for the proposal\'s current status.');
@@ -114,17 +122,21 @@ class CorrectiveProposalController extends Controller
         ];
     }
 
+    /** A proposal the user may not see is a 404, the same as another company's. */
     private function find(Request $request, int $id): CorrectiveProposal
     {
-        return CorrectiveProposal::where('company_id', $this->companyId($request))->findOrFail($id);
+        $p = CorrectiveProposal::where('company_id', $this->companyId($request))->findOrFail($id);
+        abort_unless($this->access->canSee($request->user(), $p->department_id === null ? null : (int) $p->department_id, $p->submitted_by === null ? null : (int) $p->submitted_by), 404);
+
+        return $p;
     }
 
-    /** Admins/managers can change any proposal; the submitter only while it is still pending. */
+    /** Admins/managers can change the proposals of their own departments; the submitter only while it is still pending. */
     private function authorizeModify(Request $request, CorrectiveProposal $p): void
     {
         $u = $request->user();
         abort_unless(
-            $u->hasAnyRole(['admin', 'manager']) || ($p->submitted_by === $u->id && $p->status === 'pending'),
+            $this->access->canManage($u, $p->department_id === null ? null : (int) $p->department_id) || ($p->submitted_by === $u->id && $p->status === 'pending'),
             403, 'You do not have permission to modify this proposal.'
         );
     }

@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 class BscPerspectiveController extends CompanyResourceController
 {
     protected string $model = BscPerspective::class;
+    protected array $writeRoles = ['admin']; // strategy is set by company admins only
 
     protected function rules(): array
     {
@@ -27,7 +28,7 @@ class BscPerspectiveController extends CompanyResourceController
 
     public function updateWeights(Request $request)
 {
-    abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to modify this resource.');
+    abort_unless($request->user()->hasRole('admin'), 403, 'Only company admins can change the strategy.');
 
     $data = $request->validate([
         'weights'          => ['required', 'array', 'min:1'],

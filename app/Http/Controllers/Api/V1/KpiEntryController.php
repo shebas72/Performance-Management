@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\Kpi;
 use App\Models\KpiEntry;
+use App\Services\AccessScope;
 use App\Services\KpiChangeLogger;
 use App\Services\KpiEntryService;
 use App\Services\SnapshotService;
@@ -23,6 +24,7 @@ class KpiEntryController extends Controller
         private KpiEntryService $entries,
         private SnapshotService $snapshots,
         private KpiChangeLogger $changes,
+        private AccessScope $access,
     ) {}
 
     public function index(Request $request)
@@ -40,6 +42,7 @@ class KpiEntryController extends Controller
         ]);
 
         $q = KpiEntry::with(self::KPI_FIELDS)->where('company_id', $cid);
+        $this->access->scopeByKpi($q, $request->user());
 
         foreach (['kpi_id', 'year', 'month', 'status', 'data_status'] as $f) {
             if ($request->filled($f)) $q->where($f, $request->input($f));
@@ -57,8 +60,7 @@ class KpiEntryController extends Controller
 
     public function show(Request $request, int $kpi_entry)
     {
-        $entry = KpiEntry::with(self::KPI_FIELDS)
-            ->where('company_id', $this->companyId($request))
+        $entry = $this->access->scopeByKpi(KpiEntry::with(self::KPI_FIELDS)->where('company_id', $this->companyId($request)), $request->user())
             ->findOrFail($kpi_entry);
 
         return response()->json(['data' => $entry]);
@@ -67,7 +69,7 @@ class KpiEntryController extends Controller
     /** Create-or-update the entry for (kpi_id, year, month). */
     public function store(Request $request)
     {
-        $this->authorizeWrite($request);
+        $this->authorizeEntryWrite($request);
         $cid = $this->companyId($request);
 
         $data = $request->validate([
@@ -77,6 +79,7 @@ class KpiEntryController extends Controller
         ] + $this->valueRules());
 
         $kpi   = Kpi::withoutGlobalScopes()->where('company_id', $cid)->findOrFail($data['kpi_id']);
+        $this->guardKpi($request, $kpi);
         $entry = $this->entries->save($kpi, $request->user(), (int) $data['year'], (int) $data['month'], $data);
 
         $this->snapshots->refreshMonth($cid, (int) $entry->year, (int) $entry->month);
@@ -86,7 +89,7 @@ class KpiEntryController extends Controller
 
     public function update(Request $request, int $kpi_entry)
     {
-        $this->authorizeWrite($request);
+        $this->authorizeEntryWrite($request);
         $cid   = $this->companyId($request);
         $entry = KpiEntry::where('company_id', $cid)->findOrFail($kpi_entry);
 
@@ -99,6 +102,7 @@ class KpiEntryController extends Controller
         $merged = array_merge($entry->only(['actual_value', 'note', 'note_ar', 'data_status', 'incomplete_reason']), $data);
 
         $kpi   = Kpi::withoutGlobalScopes()->where('company_id', $cid)->findOrFail($entry->kpi_id);
+        $this->guardKpi($request, $kpi);
         $saved = $this->entries->save($kpi, $request->user(), (int) $entry->year, (int) $entry->month, $merged);
 
         $this->snapshots->refreshMonth($cid, (int) $saved->year, (int) $saved->month);
@@ -108,10 +112,11 @@ class KpiEntryController extends Controller
 
     public function destroy(Request $request, int $kpi_entry)
     {
-        $this->authorizeWrite($request);
+        $this->authorizeEntryWrite($request);
         $cid   = $this->companyId($request);
         $entry = KpiEntry::where('company_id', $cid)->findOrFail($kpi_entry);
         [$year, $month] = [(int) $entry->year, (int) $entry->month];
+        $this->guardKpi($request, Kpi::withoutGlobalScopes()->where('company_id', $cid)->findOrFail($entry->kpi_id));
 
         $entry->delete();
         $this->changes->entryDeleted($entry, $request->user()->id);
@@ -123,7 +128,7 @@ class KpiEntryController extends Controller
     /** Enter a whole month at once. All-or-nothing: one bad row rolls everything back (422 names the row). */
     public function bulk(Request $request)
     {
-        $this->authorizeWrite($request);
+        $this->authorizeEntryWrite($request);
         $cid = $this->companyId($request);
 
         $v = $request->validate([
@@ -142,6 +147,8 @@ class KpiEntryController extends Controller
         $kpis = Kpi::withoutGlobalScopes()->where('company_id', $cid)
             ->whereIn('id', collect($v['entries'])->pluck('kpi_id'))->get()->keyBy('id');
 
+        foreach ($kpis as $k) $this->guardKpi($request, $k);
+
         $saved = DB::transaction(function () use ($v, $kpis, $request, $year, $month) {
             $out = [];
             foreach ($v['entries'] as $i => $row) {
@@ -153,6 +160,21 @@ class KpiEntryController extends Controller
         $this->snapshots->refreshMonth($cid, $year, $month);
 
         return response()->json(['data' => $saved, 'meta' => ['saved' => count($saved)]], 201);
+    }
+
+    /** Admins, managers and employees may enter data; viewers may not. */
+    private function authorizeEntryWrite(Request $request): void
+    {
+        abort_unless($request->user()->hasAnyRole(['admin', 'manager', 'employee']), 403, 'You do not have permission to modify KPI entries.');
+    }
+
+    private function guardKpi(Request $request, Kpi $kpi): void
+    {
+        abort_unless(
+            $this->access->canEdit($request->user(), $kpi->department_id === null ? null : (int) $kpi->department_id),
+            403,
+            'You can only enter data for KPIs in your own departments.'
+        );
     }
 
     private function valueRules(): array

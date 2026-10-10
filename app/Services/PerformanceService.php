@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Kpi;
 use App\Models\KpiEntry;
 use App\Models\StrategicObjective;
+use App\Models\User;
 use Illuminate\Support\Collection;
 
 /**
@@ -24,10 +25,14 @@ class PerformanceService
 
     public function __construct(private KpiCalculator $calc) {}
 
-    public function load(int $companyId, int $year): array
+    /** With a $user, only the KPIs and departments that user may see are loaded (null = whole company). */
+    public function load(int $companyId, int $year, ?User $user = null): array
     {
+        $ids = $user ? app(AccessScope::class)->viewIds($user) : null;
+
         $kpis = Kpi::withoutGlobalScopes()
             ->where('company_id', $companyId)->where('year', $year)->where('is_active', true)
+            ->when($ids !== null, fn ($q) => $q->whereIn('department_id', $ids))
             ->orderBy('code')->get();
 
         $objectives = StrategicObjective::withoutGlobalScopes()
@@ -39,14 +44,25 @@ class PerformanceService
 
         $departments = Department::withoutGlobalScopes()
             ->where('company_id', $companyId)->where('is_active', true)
+            ->when($ids !== null, fn ($q) => $q->whereIn('id', $ids))
             ->orderBy('sort_order')->get();
 
+        if ($ids !== null) {
+            // A department whose parent is hidden becomes a top-level one; objectives with no visible KPI are left out.
+            $visible = $departments->pluck('id')->all();
+            $departments->each(fn ($d) => $d->parent_id = in_array($d->parent_id, $visible) ? $d->parent_id : null);
+            $objectives = $objectives->filter(fn ($o) => $kpis->contains('strategic_objective_id', $o->id))->values();
+        }
+
         $entries = KpiEntry::where('company_id', $companyId)->where('year', $year)
+            ->whereIn('kpi_id', $kpis->pluck('id'))
             ->get(['id', 'kpi_id', 'month', 'achievement_pct', 'status', 'data_status', 'incomplete_reason'])
             ->groupBy('kpi_id')
             ->map(fn ($rows) => $rows->keyBy('month'));
 
-        return compact('kpis', 'objectives', 'perspectives', 'departments', 'entries');
+        $restricted = $ids !== null;
+
+        return compact('kpis', 'objectives', 'perspectives', 'departments', 'entries', 'restricted');
     }
 
     /** Per-KPI [score, status] for one month, or year-to-date through that month. */

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\User;
+use App\Services\AccessScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -118,6 +119,12 @@ class AuthController extends Controller
                 'email'      => $user->email,
                 'company_id' => $user->company_id,
                 'roles'      => $user->getRoleNames()->values(),
+                // Department ids the user can see / edit (including sub-departments); null = all of them.
+                'access'     => $user->company_id ? [
+                    'scope'               => $user->access_scope ?? 'all',
+                    'view_department_ids' => app(AccessScope::class)->viewIds($user),
+                    'edit_department_ids' => app(AccessScope::class)->editIds($user),
+                ] : null,
             ],
             'company' => $company ? [
                 'id' => $company->id, 'name' => $company->name, 'name_ar' => $company->name_ar,

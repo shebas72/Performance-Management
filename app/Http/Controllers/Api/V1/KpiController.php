@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Kpi;
+use App\Services\AccessScope;
 use App\Services\KpiChangeLogger;
 use Illuminate\Support\Facades\Auth;
 
@@ -10,7 +11,7 @@ class KpiController extends CompanyResourceController
 {
     protected string $model = Kpi::class;
 
-    public function __construct(private KpiChangeLogger $changes) {}
+    public function __construct(private KpiChangeLogger $changes, private AccessScope $access) {}
 
     protected array $searchable = ['name', 'name_ar', 'code'];
     protected array $filterable = [
@@ -49,11 +50,39 @@ class KpiController extends CompanyResourceController
         ];
     }
 
+    protected function scoped($query)
+    {
+        return $this->access->scopeByDepartment($query, Auth::user());
+    }
+
     protected function beforeCreate(array $data): array
     {
+        $this->guard($data['department_id'] ?? null);
         $data['created_by'] = Auth::id();
 
         return $data;
+    }
+
+    protected function beforeUpdate($record, array $data): array
+    {
+        $this->guard($record->department_id);
+        if (array_key_exists('department_id', $data)) $this->guard($data['department_id']);
+
+        return $data;
+    }
+
+    protected function beforeDelete($record): void
+    {
+        $this->guard($record->department_id);
+    }
+
+    private function guard($departmentId): void
+    {
+        abort_unless(
+            $this->access->canEdit(Auth::user(), $departmentId === null ? null : (int) $departmentId),
+            403,
+            'You can only manage KPIs in your own departments.'
+        );
     }
 
     protected function afterCreate($record): void

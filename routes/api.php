@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\ProjectController;
 use App\Http\Controllers\Api\V1\InitiativeController;
 use App\Http\Controllers\Api\V1\{TeamController, CompanyController};
 use App\Http\Controllers\Api\V1\ProfileController;
+use App\Http\Controllers\Api\V1\TeamPerformanceController;
 
 
 Route::prefix('v1')->group(function () {
@@ -79,6 +80,8 @@ Route::prefix('v1')->group(function () {
         Route::post('initiatives/{id}/tasks', [InitiativeController::class, 'storeTask'])->whereNumber('id');
         Route::put('execution-plan-tasks/{id}', [InitiativeController::class, 'updateTask'])->whereNumber('id');
         Route::delete('execution-plan-tasks/{id}', [InitiativeController::class, 'destroyTask'])->whereNumber('id');
+        Route::get('reports/team-performance', [TeamPerformanceController::class, 'index']);
+        Route::get('users/lookup', [TeamController::class, 'lookup']);
         Route::get('users', [TeamController::class, 'users']);
         Route::put('users/{id}', [TeamController::class, 'updateUser'])->whereNumber('id');
         Route::get('invitations', [TeamController::class, 'invitations']);

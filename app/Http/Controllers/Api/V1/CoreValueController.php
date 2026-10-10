@@ -8,6 +8,7 @@ use App\Models\StrategyHouse;
 class CoreValueController extends CompanyResourceController
 {
     protected string $model = CoreValue::class;
+    protected array $writeRoles = ['admin']; // strategy is set by company admins only
 
     protected function rules(): array
     {

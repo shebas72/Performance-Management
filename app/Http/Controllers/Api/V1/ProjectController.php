@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\ProgressUpdate;
 use App\Models\Project;
+use App\Services\AccessScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,8 @@ class ProjectController extends Controller
 {
     use ResolvesTenant;
 
+    public function __construct(private AccessScope $access) {}
+
     private const STATUSES = ['not_started', 'in_progress', 'completed', 'delayed', 'cancelled'];
     private const TYPES    = ['strategic', 'digital_transformation', 'operational'];
     private const WITH     = ['department:id,name,name_ar', 'objective:id,code,name,name_ar', 'owner:id,name'];
@@ -31,7 +34,7 @@ class ProjectController extends Controller
             'status' => ['nullable', Rule::in(self::STATUSES)], 'search' => ['nullable', 'string', 'max:100'],
         ]);
 
-        $rows = Project::with(self::WITH)->where('company_id', $this->companyId($request))
+        $rows = $this->access->scopeVisible(Project::with(self::WITH)->where('company_id', $this->companyId($request)), $request->user())
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->integer('year')))
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->when($request->filled('strategic_objective_id'), fn ($q) => $q->whereIn('id', DB::table('project_strategic_objective')
@@ -58,6 +61,7 @@ class ProjectController extends Controller
         $this->authorizeWrite($request);
         $cid  = $this->companyId($request);
         $data = $request->validate($this->rules($cid));
+        $this->guard($request, $data['department_id'] ?? null);
 
         $ids = $this->objectiveIds($request, $data);
         $p   = new Project();
@@ -74,7 +78,9 @@ class ProjectController extends Controller
     {
         $this->authorizeWrite($request);
         $p = $this->find($request, $id);
+        $this->guard($request, $p->department_id);
         $data = $request->validate($this->rules($p->company_id));
+        if (array_key_exists('department_id', $data)) $this->guard($request, $data['department_id']);
         $ids  = $this->objectiveIds($request, $data);
 
         DB::transaction(function () use ($p, $data, $ids) {
@@ -89,6 +95,7 @@ class ProjectController extends Controller
     {
         $this->authorizeWrite($request);
         $p = $this->find($request, $id);
+        $this->guard($request, $p->department_id);
 
         DB::transaction(function () use ($p) {
             ProgressUpdate::where('subject_type', 'project')->where('subject_id', $p->id)->delete();
@@ -99,12 +106,12 @@ class ProjectController extends Controller
         return response()->noContent();
     }
 
-    /** Report a project's completion for one month. Admins/managers, or the project's owner. */
+    /** Report a project's completion for one month. Admins/managers of its department, or the project's owner. */
     public function progress(Request $request, int $id)
     {
         $p = $this->find($request, $id);
         $u = $request->user();
-        abort_unless($u->hasAnyRole(['admin', 'manager']) || $p->owner_id === $u->id, 403, 'You do not have permission to update this project.');
+        abort_unless($this->access->canWorkOn($u, $p->department_id, $p->owner_id), 403, 'You do not have permission to update this project.');
 
         $data = $request->validate([
             'year'           => ['required', 'integer', 'between:2000,2100'],
@@ -146,7 +153,7 @@ class ProjectController extends Controller
         $cid  = $this->companyId($request);
         $year = $request->integer('year') ?: (int) Project::where('company_id', $cid)->max('year') ?: (int) date('Y');
 
-        $projects = Project::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year)->where('is_active', true)
+        $projects = $this->access->scopeVisible(Project::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year)->where('is_active', true), $request->user())
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->orderBy('code')->orderBy('id')->get();
 
@@ -236,9 +243,22 @@ class ProjectController extends Controller
             ->all();
     }
 
+    /** A project the user may not see is a 404, the same as another company's. */
     private function find(Request $request, int $id): Project
     {
-        return Project::with(self::WITH)->where('company_id', $this->companyId($request))->findOrFail($id);
+        $p = Project::with(self::WITH)->where('company_id', $this->companyId($request))->findOrFail($id);
+        abort_unless($this->access->canSee($request->user(), $p->department_id, $p->owner_id), 404);
+
+        return $p;
+    }
+
+    /** Changing a project needs the admin/manager role in that project's department (no department: unrestricted editors only). */
+    private function guard(Request $request, $departmentId): void
+    {
+        abort_unless(
+            $this->access->canManage($request->user(), $departmentId === null ? null : (int) $departmentId),
+            403, 'You can only manage projects in your own departments.'
+        );
     }
 
     private function authorizeWrite(Request $request): void

@@ -6,7 +6,11 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\ExecutionPlanTask;
 use App\Models\Initiative;
+use App\Models\Kpi;
 use App\Models\ProgressUpdate;
+use App\Models\Project;
+use App\Models\User;
+use App\Services\AccessScope;
 use App\Services\ProgressRollup;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -24,7 +28,7 @@ class InitiativeController extends Controller
     private const STATUSES = ['not_started', 'in_progress', 'completed', 'delayed', 'cancelled'];
     private const WITH     = ['department:id,name,name_ar', 'objective:id,code,name,name_ar', 'owner:id,name', 'tasks'];
 
-    public function __construct(private ProgressRollup $rollup) {}
+    public function __construct(private ProgressRollup $rollup, private AccessScope $access) {}
 
     public function index(Request $request)
     {
@@ -33,7 +37,7 @@ class InitiativeController extends Controller
             'project_id' => ['nullable', 'integer'], 'status' => ['nullable', Rule::in(self::STATUSES)],
         ]);
 
-        $rows = Initiative::with(self::WITH)->where('company_id', $this->companyId($request))
+        $rows = $this->access->scopeVisible(Initiative::with(self::WITH)->where('company_id', $this->companyId($request)), $request->user())
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->integer('year')))
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->when($request->filled('strategic_objective_id'), fn ($q) => $q->where('strategic_objective_id', $request->integer('strategic_objective_id')))
@@ -54,7 +58,9 @@ class InitiativeController extends Controller
         $this->authorizeWrite($request);
         $cid  = $this->companyId($request);
         $data = $request->validate($this->rules($cid));
+        $this->guard($request, $data['department_id'] ?? null);
         [$projectIds, $kpiIds] = $this->links($request, $data);
+        [$projectIds, $kpiIds] = $this->checkedLinks($request->user(), null, $projectIds, $kpiIds);
 
         $i = new Initiative();
         DB::transaction(function () use ($i, $data, $cid, $request, $projectIds, $kpiIds) {
@@ -70,8 +76,11 @@ class InitiativeController extends Controller
     {
         $this->authorizeWrite($request);
         $i    = $this->find($request, $id);
+        $this->guard($request, $i->department_id);
         $data = $request->validate($this->rules($i->company_id));
+        if (array_key_exists('department_id', $data)) $this->guard($request, $data['department_id']);
         [$projectIds, $kpiIds] = $this->links($request, $data);
+        [$projectIds, $kpiIds] = $this->checkedLinks($request->user(), $i, $projectIds, $kpiIds);
         $before = DB::table('initiative_project')->where('initiative_id', $i->id)->pluck('project_id')->all();
 
         DB::transaction(function () use ($i, $data, $projectIds, $kpiIds) {
@@ -87,6 +96,7 @@ class InitiativeController extends Controller
     {
         $this->authorizeWrite($request);
         $i      = $this->find($request, $id);
+        $this->guard($request, $i->department_id);
         $linked = DB::table('initiative_project')->where('initiative_id', $i->id)->pluck('project_id')->all();
 
         DB::transaction(function () use ($i) {
@@ -98,12 +108,12 @@ class InitiativeController extends Controller
         return response()->noContent();
     }
 
-    /** Report an initiative's completion for one month (admins/managers or the owner). Overrides the automatic value for that month. */
+    /** Report an initiative's completion for one month (admins/managers of its department, or the owner). Overrides the automatic value for that month. */
     public function progress(Request $request, int $id)
     {
         $i = $this->find($request, $id);
         $u = $request->user();
-        abort_unless($u->hasAnyRole(['admin', 'manager']) || $i->owner_id === $u->id, 403, 'You do not have permission to update this initiative.');
+        abort_unless($this->access->canWorkOn($u, $i->department_id, $i->owner_id), 403, 'You do not have permission to update this initiative.');
 
         $data = $request->validate([
             'year' => ['required', 'integer', 'between:2000,2100'], 'month' => ['required', 'integer', 'between:1,12'],
@@ -169,7 +179,7 @@ class InitiativeController extends Controller
         $cid  = $this->companyId($request);
         $year = $request->integer('year') ?: (int) Initiative::where('company_id', $cid)->max('year') ?: (int) date('Y');
 
-        $items = Initiative::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year)
+        $items = $this->access->scopeVisible(Initiative::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year), $request->user())
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->orderBy('code')->orderBy('id')->get();
 
@@ -256,14 +266,61 @@ class InitiativeController extends Controller
         }
     }
 
+    /** An initiative the user may not see is a 404, the same as another company's. */
     private function find(Request $request, int $id): Initiative
     {
-        return Initiative::with(self::WITH)->where('company_id', $this->companyId($request))->findOrFail($id);
+        $i = Initiative::with(self::WITH)->where('company_id', $this->companyId($request))->findOrFail($id);
+        abort_unless($this->access->canSee($request->user(), $i->department_id, $i->owner_id), 404);
+
+        return $i;
     }
 
     private function findTask(Request $request, int $id): ExecutionPlanTask
     {
-        return ExecutionPlanTask::with('initiative')->where('company_id', $this->companyId($request))->findOrFail($id);
+        $t = ExecutionPlanTask::with('initiative')->where('company_id', $this->companyId($request))->findOrFail($id);
+        abort_unless($t->initiative && $this->access->canSee($request->user(), $t->initiative->department_id, $t->initiative->owner_id), 404);
+
+        return $t;
+    }
+
+    /** Changing an initiative needs the admin/manager role in its department (no department: unrestricted editors only). */
+    private function guard(Request $request, $departmentId): void
+    {
+        abort_unless(
+            $this->access->canManage($request->user(), $departmentId === null ? null : (int) $departmentId),
+            403, 'You can only manage initiatives in your own departments.'
+        );
+    }
+
+    /**
+     * Links may only point at projects and KPIs the user can see. Links the user cannot see are not shown to them,
+     * so on an update they are kept as they are rather than dropped. null = the key was not sent (leave links alone).
+     */
+    private function checkedLinks(User $u, ?Initiative $i, ?array $projectIds, ?array $kpiIds): array
+    {
+        $cid = (int) $u->company_id;
+
+        if ($projectIds !== null) {
+            $visible = $this->access->scopeVisible(Project::where('company_id', $cid)->whereIn('id', $projectIds), $u)->pluck('id')->all();
+            abort_if(count(array_diff($projectIds, $visible)) > 0, 422, 'You can only link projects you can see.');
+            if ($i) {
+                $current = DB::table('initiative_project')->where('initiative_id', $i->id)->pluck('project_id')->all();
+                $seen    = $this->access->scopeVisible(Project::where('company_id', $cid)->whereIn('id', $current), $u)->pluck('id')->all();
+                $projectIds = array_values(array_unique(array_merge($projectIds, array_diff($current, $seen))));
+            }
+        }
+
+        if ($kpiIds !== null) {
+            $visible = $this->access->scopeByDepartment(Kpi::withoutGlobalScopes()->where('company_id', $cid)->whereIn('id', $kpiIds), $u)->pluck('id')->all();
+            abort_if(count(array_diff($kpiIds, $visible)) > 0, 422, 'You can only link KPIs you can see.');
+            if ($i) {
+                $current = DB::table('initiative_kpi')->where('initiative_id', $i->id)->pluck('kpi_id')->all();
+                $seen    = $this->access->scopeByDepartment(Kpi::withoutGlobalScopes()->where('company_id', $cid)->whereIn('id', $current), $u)->pluck('id')->all();
+                $kpiIds  = array_values(array_unique(array_merge($kpiIds, array_diff($current, $seen))));
+            }
+        }
+
+        return [$projectIds, $kpiIds];
     }
 
     private function authorizeWrite(Request $request): void
@@ -273,19 +330,24 @@ class InitiativeController extends Controller
 
     private function authorizeTask(Request $request, Initiative $i): void
     {
-        $u = $request->user();
-        abort_unless($u->hasAnyRole(['admin', 'manager']) || $i->owner_id === $u->id, 403, 'You do not have permission to change this initiative\'s plan.');
+        abort_unless($this->access->canWorkOn($request->user(), $i->department_id, $i->owner_id), 403, 'You do not have permission to change this initiative\'s plan.');
     }
 
     /** Loads the linked projects and KPIs for a batch of initiatives in two queries. */
     private function shapeMany(Collection $items): array
     {
         $ids      = $items->pluck('id');
+        $me       = request()->user();
+        $view     = $me ? $this->access->viewIds($me) : null; // null = unrestricted
         $projects = DB::table('initiative_project as ip')->join('projects as p', 'p.id', '=', 'ip.project_id')->leftJoin('departments as d', 'd.id', '=', 'p.department_id')
-            ->whereIn('ip.initiative_id', $ids)->orderBy('ip.id')
+            ->whereIn('ip.initiative_id', $ids)
+            ->when($view !== null, fn ($q) => $q->where(fn ($w) => $w->whereIn('p.department_id', $view)->orWhere('p.owner_id', $me->id)))
+            ->orderBy('ip.id')
             ->get(['ip.initiative_id', 'p.id', 'p.code', 'p.name', 'p.name_ar', 'p.completion_pct', 'd.name as department_name', 'd.name_ar as department_name_ar'])->groupBy('initiative_id');
         $kpis = DB::table('initiative_kpi as ik')->join('kpis as k', 'k.id', '=', 'ik.kpi_id')
-            ->whereIn('ik.initiative_id', $ids)->orderBy('ik.id')->get(['ik.initiative_id', 'k.id', 'k.code', 'k.name', 'k.name_ar'])->groupBy('initiative_id');
+            ->whereIn('ik.initiative_id', $ids)
+            ->when($view !== null, fn ($q) => $q->whereIn('k.department_id', $view))
+            ->orderBy('ik.id')->get(['ik.initiative_id', 'k.id', 'k.code', 'k.name', 'k.name_ar'])->groupBy('initiative_id');
 
         return $items->map(fn (Initiative $i) => array_merge(
             $i->only(['id', 'department_id', 'strategic_objective_id', 'owner_id', 'code', 'name', 'name_ar', 'description', 'description_ar', 'status', 'year']),
