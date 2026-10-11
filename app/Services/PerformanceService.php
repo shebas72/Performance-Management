@@ -139,6 +139,47 @@ class PerformanceService
         return compact('company', 'perspectives', 'objectives', 'departments');
     }
 
+    /**
+     * Month-by-month score series for the company, every objective and every department.
+     * Each entry is [{month, score, ytd_score}] for months 1-12. Months after the last month that has
+     * any entry stay null (the year is not over yet), so a line chart simply stops there. For a month in
+     * the reported range with no data of its own, score is null but ytd_score still carries the running value.
+     */
+    public function series(array $ctx): array
+    {
+        $last = 0;
+        foreach ($ctx['entries'] as $rows) {
+            foreach ($rows as $e) {
+                if ($e->achievement_pct !== null) $last = max($last, (int) $e->month);
+            }
+        }
+
+        $out = ['company' => [], 'objectives' => [], 'departments' => []];
+        foreach ($ctx['objectives'] as $o) $out['objectives'][$o->id] = [];
+        foreach ($ctx['departments'] as $d) $out['departments'][$d->id] = [];
+
+        for ($m = 1; $m <= 12; $m++) {
+            if ($m <= $last) {
+                $cur = $this->rollup($ctx, $this->kpiScores($ctx, $m));
+                $ytd = $this->rollup($ctx, $this->kpiScores($ctx, $m, true));
+            } else {
+                $cur = $ytd = null;
+            }
+
+            $point = fn (string $group, $id = null) => [
+                'month'     => $m,
+                'score'     => $cur ? ($id === null ? $cur[$group]['score'] : $cur[$group][$id]['score']) : null,
+                'ytd_score' => $ytd ? ($id === null ? $ytd[$group]['score'] : $ytd[$group][$id]['score']) : null,
+            ];
+
+            $out['company'][] = $point('company');
+            foreach ($ctx['objectives'] as $o) $out['objectives'][$o->id][] = $point('objectives', $o->id);
+            foreach ($ctx['departments'] as $d) $out['departments'][$d->id][] = $point('departments', $d->id);
+        }
+
+        return $out;
+    }
+
     private function pack(Collection $ks, array $scores, ?float $score): array
     {
         $c = ['kpi_count' => $ks->count(), 'high' => 0, 'medium' => 0, 'low' => 0, 'not_entered' => 0];

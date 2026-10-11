@@ -77,9 +77,18 @@ class KpiController extends CompanyResourceController
         return $data;
     }
 
+    /** Counts taken before the delete, written to the deletion record after it succeeds. */
+    private array $deletedCounts = [];
+
     protected function beforeDelete($record): void
     {
         $this->guard($record->department_id);
+        $this->deletedCounts = $this->changes->deletionCounts($record);
+    }
+
+    protected function afterDelete($record): void
+    {
+        $this->changes->kpiDeleted($record, $this->deletedCounts, Auth::id());
     }
 
     private function guard($departmentId): void

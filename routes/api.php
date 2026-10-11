@@ -18,6 +18,8 @@ use App\Http\Controllers\Api\V1\InitiativeController;
 use App\Http\Controllers\Api\V1\{TeamController, CompanyController};
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\TeamPerformanceController;
+use App\Http\Controllers\Api\V1\PdfReportController;
+use App\Http\Controllers\Api\V1\KpiDeletionController;
 use App\Http\Middleware\RequirePlanFeature;
 
 
@@ -85,6 +87,15 @@ Route::prefix('v1')->group(function () {
             Route::delete('execution-plan-tasks/{id}', [InitiativeController::class, 'destroyTask'])->whereNumber('id');
         });
         Route::get('reports/team-performance', [TeamPerformanceController::class, 'index']);
+        // PDF reports: plan feature pdf_export; throttled because each one renders a document.
+        Route::middleware(['throttle:20,1', RequirePlanFeature::class.':pdf_export'])->prefix('reports/pdf')->group(function () {
+            Route::get('dashboard', [PdfReportController::class, 'dashboard']);
+            Route::get('objectives', [PdfReportController::class, 'objectives']);
+            Route::get('departments', [PdfReportController::class, 'departments']);
+            Route::get('team-performance', [PdfReportController::class, 'team']);
+            Route::get('kpis/{id}', [PdfReportController::class, 'kpi'])->whereNumber('id');
+        });
+        Route::get('kpi-deletions', [KpiDeletionController::class, 'index']);
         Route::get('users/lookup', [TeamController::class, 'lookup']);
         Route::get('users', [TeamController::class, 'users']);
         Route::put('users/{id}', [TeamController::class, 'updateUser'])->whereNumber('id');

@@ -81,16 +81,17 @@ class DashboardController extends Controller
         ]]);
     }
 
-    /** Strategic objective cards. Filters: perspective_id. */
+    /** Strategic objective cards. Filters: perspective_id. ?series=1 adds the monthly series per objective plus the company overall. */
     public function objectives(Request $request)
     {
         [$cid, $year, $month] = $this->period($request);
-        $request->validate(['perspective_id' => ['nullable', 'integer']]);
+        $request->validate(['perspective_id' => ['nullable', 'integer'], 'series' => ['nullable', 'boolean']]);
 
         $ctx = $this->perf->load($cid, $year, $request->user());
         $cur = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month));
         $ytd = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month, true));
         $persp = $ctx['perspectives']->keyBy('id');
+        $series = $request->boolean('series') ? $this->perf->series($ctx) : null;
 
         $rows = $ctx['objectives']
             ->when($request->filled('perspective_id'), fn ($c) => $c->where('bsc_perspective_id', (int) $request->input('perspective_id')))
@@ -100,26 +101,33 @@ class DashboardController extends Controller
                     ? ['id' => $p->id, 'name' => $p->name, 'name_ar' => $p->name_ar, 'color' => $p->color] : null,
                 'current' => $cur['objectives'][$o->id],
                 'ytd'     => $ytd['objectives'][$o->id],
-            ])->values();
+            ] + ($series ? ['series' => $series['objectives'][$o->id]] : []))->values();
 
-        return response()->json(['data' => $rows, 'meta' => ['year' => $year, 'month' => $month]]);
+        $payload = ['data' => $rows, 'meta' => ['year' => $year, 'month' => $month]];
+        if ($series) {
+            $payload['overall'] = ['current' => $cur['company'], 'ytd' => $ytd['company'], 'series' => $series['company']];
+        }
+
+        return response()->json($payload);
     }
 
-    /** Department performance (each department includes its sub-departments). */
+    /** Department performance (each department includes its sub-departments). ?series=1 adds the monthly series per department. */
     public function departments(Request $request)
     {
         [$cid, $year, $month] = $this->period($request);
+        $request->validate(['series' => ['nullable', 'boolean']]);
 
         $ctx = $this->perf->load($cid, $year, $request->user());
         $cur = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month));
         $ytd = $this->perf->rollup($ctx, $this->perf->kpiScores($ctx, $month, true));
+        $series = $request->boolean('series') ? $this->perf->series($ctx) : null;
 
         $rows = $ctx['departments']->map(fn ($d) => [
             'id' => $d->id, 'parent_id' => $d->parent_id, 'code' => $d->code,
             'name' => $d->name, 'name_ar' => $d->name_ar, 'color' => $d->color,
             'current' => $cur['departments'][$d->id],
             'ytd'     => $ytd['departments'][$d->id],
-        ])->values();
+        ] + ($series ? ['series' => $series['departments'][$d->id]] : []))->values();
 
         return response()->json(['data' => $rows, 'meta' => ['year' => $year, 'month' => $month]]);
     }

@@ -29,6 +29,8 @@ class CompanyController extends Controller
             'name' => ['required', 'string', 'max:255'], 'name_ar' => ['nullable', 'string', 'max:255'],
             'timezone' => ['nullable', 'timezone:all'], 'default_language' => ['nullable', 'in:en,ar'],
             'team_report_visibility' => ['sometimes', 'in:colleagues,own'],
+            // The month the fiscal year starts in, stored as MM-DD. Fiscal years start on the 1st.
+            'fiscal_year_start' => ['sometimes', 'required', 'regex:/^(0[1-9]|1[0-2])-01$/'],
         ]))->save();
 
         return response()->json(['data' => $this->shape($c)]);
@@ -86,6 +88,7 @@ class CompanyController extends Controller
             'id' => $c->id, 'name' => $c->name, 'name_ar' => $c->name_ar, 'timezone' => $c->timezone, 'default_language' => $c->default_language,
             'logo_url' => $c->logo ? Storage::disk('public')->url($c->logo) : null,
             'team_report_visibility' => $c->team_report_visibility ?? 'colleagues',
+            'fiscal_year_start' => $c->fiscal_year_start ?: '01-01',
         ];
     }
 }

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Kpi;
 use App\Models\KpiChangeLog;
+use App\Models\KpiDeletionLog;
 use App\Models\KpiEntry;
 use App\Models\KpiTarget;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +32,36 @@ class KpiChangeLogger
     public function kpiCreated(Kpi $kpi, ?int $userId): void
     {
         $this->write($kpi->company_id, $kpi->id, $userId, 'kpi_created');
+    }
+
+    /** What a KPI holds before it is deleted (its entries and targets go with it), for the deletion record. */
+    public function deletionCounts(Kpi $kpi): array
+    {
+        return [
+            'entries' => KpiEntry::where('company_id', $kpi->company_id)->where('kpi_id', $kpi->id)->count(),
+            'targets' => KpiTarget::withoutGlobalScopes()->where('company_id', $kpi->company_id)->where('kpi_id', $kpi->id)->count(),
+        ];
+    }
+
+    /**
+     * Deleting a KPI removes its change history with it, so the deletion itself is kept in its own table:
+     * who deleted which KPI, when, and how much data went with it.
+     */
+    public function kpiDeleted(Kpi $kpi, array $counts, ?int $userId): void
+    {
+        KpiDeletionLog::create([
+            'company_id'      => $kpi->company_id,
+            'kpi_id'          => $kpi->id,
+            'user_id'         => $userId,
+            'code'            => $kpi->code,
+            'name'            => $kpi->name,
+            'name_ar'         => $kpi->name_ar,
+            'year'            => $kpi->year,
+            'department_id'   => $kpi->department_id,
+            'department_name' => $kpi->department_id ? DB::table('departments')->where('id', $kpi->department_id)->value('name') : null,
+            'entries_count'   => $counts['entries'] ?? 0,
+            'targets_count'   => $counts['targets'] ?? 0,
+        ]);
     }
 
     /** $before is the model's raw attributes captured before the save. */
