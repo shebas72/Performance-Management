@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Company;
+use App\Models\ExecutionPlanTask;
 use App\Models\Initiative;
 use App\Models\KpiEntry;
 use App\Models\KpiTarget;
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\DB;
  *   employee / viewer, "colleagues" -> the same rule as a manager, without the teams and the unowned KPIs
  *   employee / viewer, "own"        -> only their own row (company setting team_report_visibility)
  * A person's KPIs, projects and initiatives are always limited to what the viewer can see.
+ * Task load: the execution plan tasks assigned to the person, in this year's initiatives that the viewer can see.
  */
 class TeamPerformanceService
 {
@@ -89,11 +91,16 @@ class TeamPerformanceService
             ->orderBy('code')->get();
         $initiatives = $this->access->scopeVisible(Initiative::where('company_id', $cid)->where('year', $year)->whereIn('owner_id', $ids), $viewer)
             ->orderBy('code')->get();
+        $visibleInitiatives = $this->access->scopeInitiatives(Initiative::where('company_id', $cid)->where('year', $year), $viewer)
+            ->get(['id', 'code', 'name', 'name_ar'])->keyBy('id');
+        $tasks = $visibleInitiatives->isEmpty() ? collect() : ExecutionPlanTask::where('company_id', $cid)
+            ->whereIn('assigned_to', $ids)->whereIn('initiative_id', $visibleInitiatives->keys())
+            ->orderBy('due_date')->orderBy('id')->get()->groupBy('assigned_to');
         $pctP = $this->carried('project', $cid, $year, $month, $projects->pluck('id'));
         $pctI = $this->carried('initiative', $cid, $year, $month, $initiatives->pluck('id'));
 
         // --- rows
-        $rows = $people->map(function (User $u) use ($owned, $cur, $ytd, $expected, $missing, $logged, $links, $depts, $projects, $initiatives, $pctP, $pctI, $viewer) {
+        $rows = $people->map(function (User $u) use ($owned, $cur, $ytd, $expected, $missing, $logged, $links, $depts, $projects, $initiatives, $pctP, $pctI, $viewer, $tasks, $visibleInitiatives) {
             $mine = $owned->get($u->id, collect())->values();
 
             return [
@@ -105,6 +112,7 @@ class TeamPerformanceService
                 'data' => $this->dataBlock($mine, $expected, $missing) + ['entries_logged' => (int) ($logged[$u->id] ?? 0)],
                 'projects'    => $this->workBlock($projects->where('owner_id', $u->id), $pctP),
                 'initiatives' => $this->workBlock($initiatives->where('owner_id', $u->id), $pctI),
+                'tasks'       => $this->taskBlock($tasks->get($u->id, collect()), $visibleInitiatives),
             ];
         })->values();
 
@@ -114,6 +122,7 @@ class TeamPerformanceService
             ] + $this->metrics($unowned, $cur, $ytd, $expected, $missing) + [
                 'data' => $this->dataBlock($unowned, $expected, $missing) + ['entries_logged' => 0],
                 'projects' => $this->workBlock(collect(), []), 'initiatives' => $this->workBlock(collect(), []),
+                'tasks' => $this->taskBlock(collect(), collect()),
             ]);
         }
 
@@ -184,6 +193,32 @@ class TeamPerformanceService
             'avg_pct'   => $vals->isEmpty() ? null : round($vals->avg(), 1),
             'completed' => $rows->where('status', 'completed')->count(),
             'late'      => $rows->filter(fn ($r) => ! in_array($r['status'], ['completed', 'cancelled'], true) && ($r['status'] === 'delayed' || ! $r['is_on_timeline']))->count(),
+            'items'     => $rows,
+        ];
+    }
+
+    /**
+     * Task load for one person: how many tasks, average completion, completed and overdue ones, and the list.
+     * Overdue is worked out against today (the same rule as the initiative page), not against the selected month.
+     */
+    private function taskBlock(Collection $tasks, Collection $initiatives): array
+    {
+        $rows = $tasks->map(function ($t) use ($initiatives) {
+            $overdue = $t->status !== 'completed' && $t->due_date && $t->due_date->isPast() && ! $t->due_date->isToday();
+            $i = $initiatives->get($t->initiative_id);
+
+            return [
+                'id' => $t->id, 'task_name' => $t->task_name, 'task_name_ar' => $t->task_name_ar, 'due_date' => $t->due_date?->toDateString(),
+                'pct' => (float) $t->completion_pct, 'status' => $overdue ? 'overdue' : $t->status,
+                'initiative' => $i ? ['id' => $i->id, 'code' => $i->code, 'name' => $i->name, 'name_ar' => $i->name_ar] : null,
+            ];
+        })->values();
+
+        return [
+            'count'     => $rows->count(),
+            'avg_pct'   => $rows->isEmpty() ? null : round($rows->avg('pct'), 1),
+            'completed' => $rows->where('status', 'completed')->count(),
+            'overdue'   => $rows->where('status', 'overdue')->count(),
             'items'     => $rows,
         ];
     }

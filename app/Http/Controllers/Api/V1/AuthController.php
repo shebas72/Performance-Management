@@ -129,6 +129,7 @@ class AuthController extends Controller
             'company' => $company ? [
                 'id' => $company->id, 'name' => $company->name, 'name_ar' => $company->name_ar,
                 'logo_url' => $company->logo ? Storage::disk('public')->url($company->logo) : null,
+                'features' => app(\App\Services\PlanLimits::class)->features($company->id),
             ] : null,
         ], fn ($v) => $v !== null);
     }

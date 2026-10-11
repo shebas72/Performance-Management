@@ -5,13 +5,15 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Kpi;
 use App\Services\AccessScope;
 use App\Services\KpiChangeLogger;
+use App\Services\PlanLimits;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
 class KpiController extends CompanyResourceController
 {
     protected string $model = Kpi::class;
 
-    public function __construct(private KpiChangeLogger $changes, private AccessScope $access) {}
+    public function __construct(private KpiChangeLogger $changes, private AccessScope $access, private PlanLimits $limits) {}
 
     protected array $searchable = ['name', 'name_ar', 'code'];
     protected array $filterable = [
@@ -58,6 +60,8 @@ class KpiController extends CompanyResourceController
     protected function beforeCreate(array $data): array
     {
         $this->guard($data['department_id'] ?? null);
+        // A new KPI is active unless said otherwise; inactive ones do not use a plan seat.
+        if ($data['is_active'] ?? true) $this->limits->assertCanAdd((int) Auth::user()->company_id, 'kpis');
         $data['created_by'] = Auth::id();
 
         return $data;
@@ -67,6 +71,8 @@ class KpiController extends CompanyResourceController
     {
         $this->guard($record->department_id);
         if (array_key_exists('department_id', $data)) $this->guard($data['department_id']);
+        // Switching a KPI back on takes a plan seat again.
+        if (! $record->is_active && ($data['is_active'] ?? false)) $this->limits->assertCanAdd((int) $record->company_id, 'kpis');
 
         return $data;
     }
@@ -93,5 +99,13 @@ class KpiController extends CompanyResourceController
     protected function afterUpdate($record, array $before): void
     {
         $this->changes->kpiUpdated($record, $before, Auth::id());
+
+        // Open corrective proposals follow the KPI to its new department (finished ones stay where they were as history).
+        if ($record->wasChanged('department_id')) {
+            DB::table('corrective_proposals')
+                ->where('company_id', $record->company_id)->where('kpi_id', $record->id)
+                ->whereIn('status', ['pending', 'in_progress'])
+                ->update(['department_id' => $record->department_id, 'updated_at' => now()]);
+        }
     }
 }

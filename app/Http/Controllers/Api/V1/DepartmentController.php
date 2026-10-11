@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Department;
 use App\Models\Kpi;
 use App\Services\AccessScope;
+use App\Services\PlanLimits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -13,7 +14,7 @@ class DepartmentController extends CompanyResourceController
     protected string $model = Department::class;
     protected array $filterable = ['parent_id'];
 
-    public function __construct(private AccessScope $access) {}
+    public function __construct(private AccessScope $access, private PlanLimits $limits) {}
 
     protected function rules(): array
     {
@@ -39,6 +40,7 @@ class DepartmentController extends CompanyResourceController
     {
         // A new department has to hang under one the user may edit; only unrestricted editors can add a top-level one.
         $this->guard($data['parent_id'] ?? null);
+        $this->limits->assertCanAdd((int) Auth::user()->company_id, 'departments');
 
         return $data;
     }

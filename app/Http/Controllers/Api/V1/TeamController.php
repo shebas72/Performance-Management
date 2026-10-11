@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Invitation;
 use App\Models\User;
+use App\Services\PlanLimits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -25,6 +26,8 @@ class TeamController extends Controller
 
     private const ROLES = ['admin', 'manager', 'employee', 'viewer'];
     private const INVITE_DAYS = 7;
+
+    public function __construct(private PlanLimits $limits) {}
 
     /* ---- users ---- */
 
@@ -49,6 +52,7 @@ class TeamController extends Controller
             'email' => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'password' => ['sometimes', 'string', 'min:8'],
         ] + $this->accessRules($cid));
+        if (($data['is_active'] ?? false) && ! (bool) ($user->is_active ?? true)) $this->limits->assertCanAdd($cid, 'users'); // reactivating takes a seat
         abort_if(isset($data['password']) && $user->id === $request->user()->id, 422, 'Change your own password from your profile.');
 
         $losesAdmin = $user->hasRole('admin') && ((isset($data['role']) && $data['role'] !== 'admin') || (isset($data['is_active']) && ! $data['is_active']));
@@ -81,7 +85,7 @@ class TeamController extends Controller
 
     /**
      * Admin adds a user directly (no invitation). With no password given, a temporary one is generated and returned once.
-     * Plan limits on the number of users would be checked here.
+     * Counts against the plan's user limit.
      */
     public function createUser(Request $request)
     {
@@ -90,6 +94,7 @@ class TeamController extends Controller
             'name' => ['required', 'string', 'max:255'], 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'role' => ['required', Rule::in(self::ROLES)], 'password' => ['nullable', 'string', 'min:8'],
         ] + $this->accessRules($cid));
+        $this->limits->assertCanAdd($cid, 'users');
         $plain = $data['password'] ?? Str::password(12, symbols: false);
 
         $user = DB::transaction(function () use ($cid, $data, $plain) {
@@ -131,10 +136,16 @@ class TeamController extends Controller
     public function invite(Request $request)
     {
         $cid  = $this->requireAdmin($request);
-        $data = $request->validate(['email' => ['required', 'email', 'max:255'], 'role' => ['required', Rule::in(self::ROLES)]]);
+        $data = $request->validate(['email' => ['required', 'email', 'max:255'], 'role' => ['required', Rule::in(self::ROLES)]] + $this->accessRules($cid));
         $email = Str::lower($data['email']);
 
+        if (! empty($data['manager_id'])) {
+            abort_unless(User::where('company_id', $cid)->where('is_active', true)->find($data['manager_id'])?->hasAnyRole(['admin', 'manager']), 422, 'The manager must be an active admin or manager.');
+        }
+        $isAdminRole = $data['role'] === 'admin'; // admins always see everything, so no scope or departments are stored
+
         abort_if(User::where('email', $email)->exists(), 422, 'This email address is already registered.');
+        $this->limits->assertCanAdd($cid, 'users');
         abort_if(Invitation::where('company_id', $cid)->where('email', $email)->pending()->where('expires_at', '>', now())->exists(), 422, 'An invitation is already pending for this email. Resend it instead.');
 
         $token = Str::random(48);
@@ -142,6 +153,10 @@ class TeamController extends Controller
         $inv->forceFill([
             'company_id' => $cid, 'email' => $email, 'role' => $data['role'], 'token_hash' => hash('sha256', $token),
             'invited_by' => $request->user()->id, 'expires_at' => now()->addDays(self::INVITE_DAYS),
+            'access_scope' => $isAdminRole ? 'all' : ($data['access_scope'] ?? 'own'),
+            'manager_id' => $isAdminRole ? null : ($data['manager_id'] ?? null),
+            'department_ids' => $isAdminRole ? [] : array_values($data['department_ids'] ?? []),
+            'access_department_ids' => $isAdminRole ? [] : array_values($data['access_department_ids'] ?? []),
         ])->save();
 
         return response()->json(['data' => $this->withLink($inv, $token, $request)], 201);
@@ -152,6 +167,7 @@ class TeamController extends Controller
     {
         $cid = $this->requireAdmin($request);
         $inv = Invitation::where('company_id', $cid)->pending()->findOrFail($id);
+        if ($inv->expires_at->isPast()) $this->limits->assertCanAdd($cid, 'users'); // an expired invitation held no seat
         $token = Str::random(48);
         $inv->forceFill(['token_hash' => hash('sha256', $token), 'expires_at' => now()->addDays(self::INVITE_DAYS)])->save();
 
@@ -180,6 +196,8 @@ class TeamController extends Controller
         $data = $request->validate(['token' => ['required', 'string'], 'name' => ['required', 'string', 'max:255'], 'password' => ['required', 'string', 'min:8', 'confirmed']]);
         $inv  = $this->usable($data['token']);
         abort_if(User::where('email', $inv->email)->exists(), 422, 'This email address is already registered.');
+        // The invitation itself already holds a seat, so only a plan that shrank below the current use blocks the accept.
+        $this->limits->assertCanAdd((int) $inv->company_id, 'users', 0);
 
         $user = DB::transaction(function () use ($inv, $data) {
             $user = new User();
@@ -189,6 +207,7 @@ class TeamController extends Controller
             ])->save();
             Role::findOrCreate($inv->role);
             $user->assignRole($inv->role);
+            $this->applyInvitationAccess($user, $inv);
             $inv->forceFill(['accepted_at' => now()])->save();
 
             return $user;
@@ -228,6 +247,26 @@ class TeamController extends Controller
         }
 
         return $this->shapeInvitation($inv->load('inviter:id,name')) + ['invite_url' => $link, 'emailed' => $sent];
+    }
+
+    /**
+     * Apply what the admin chose when inviting. Departments and the manager are re-checked now, because they may have been
+     * removed, deactivated or changed role during the days the invitation was pending; anything no longer valid is skipped.
+     * An invitation sent before this feature has no stored choice, so the person keeps the default (scope own, no departments).
+     */
+    private function applyInvitationAccess(User $user, Invitation $inv): void
+    {
+        if ($inv->role === 'admin') return;
+
+        $valid   = fn (?array $ids) => DB::table('departments')->where('company_id', $inv->company_id)->whereIn('id', $ids ?: [0])->pluck('id')->map(fn ($v) => (int) $v)->all();
+        $manager = $inv->manager_id ? User::where('company_id', $inv->company_id)->where('is_active', true)->find($inv->manager_id) : null;
+
+        $this->applyAccess($user, [
+            'access_scope'          => in_array($inv->access_scope, ['own', 'all', 'selected'], true) ? $inv->access_scope : 'own',
+            'manager_id'            => $manager?->hasAnyRole(['admin', 'manager']) ? $manager->id : null,
+            'department_ids'        => $valid($inv->department_ids),
+            'access_department_ids' => $valid($inv->access_department_ids),
+        ]);
     }
 
     private function accessRules(int $cid): array
@@ -281,6 +320,10 @@ class TeamController extends Controller
 
     private function shapeInvitation(Invitation $i): array
     {
-        return ['id' => $i->id, 'email' => $i->email, 'role' => $i->role, 'expires_at' => $i->expires_at->toDateString(), 'expired' => $i->expires_at->isPast(), 'invited_by' => $i->inviter?->name];
+        return [
+            'id' => $i->id, 'email' => $i->email, 'role' => $i->role, 'expires_at' => $i->expires_at->toDateString(), 'expired' => $i->expires_at->isPast(), 'invited_by' => $i->inviter?->name,
+            'access_scope' => $i->access_scope ?? 'own', 'manager_id' => $i->manager_id,
+            'department_ids' => array_map('intval', $i->department_ids ?? []), 'access_department_ids' => array_map('intval', $i->access_department_ids ?? []),
+        ];
     }
 }

@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\ExecutionPlanTask;
+use App\Models\Initiative;
 use App\Models\Kpi;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -95,6 +97,27 @@ class AccessScope
     public function canSee(User $u, ?int $departmentId, ?int $ownerId = null): bool
     {
         return $this->canView($u, $departmentId) || ($ownerId !== null && $ownerId === $u->id);
+    }
+
+    /**
+     * Initiatives follow scopeVisible, and a person can also see an initiative that has a task assigned to them,
+     * so assigned work never disappears from view when it sits outside their departments.
+     */
+    public function scopeInitiatives($query, User $u)
+    {
+        $ids = $this->viewIds($u);
+        if ($ids === null) return $query;
+
+        return $query->where(function ($w) use ($ids, $u) {
+            $w->whereIn('department_id', $ids)->orWhere('owner_id', $u->id)
+                ->orWhereIn('id', ExecutionPlanTask::where('company_id', $u->company_id)->where('assigned_to', $u->id)->select('initiative_id'));
+        });
+    }
+
+    public function canSeeInitiative(User $u, Initiative $i): bool
+    {
+        return $this->canSee($u, $i->department_id, $i->owner_id)
+            || ExecutionPlanTask::where('company_id', $u->company_id)->where('initiative_id', $i->id)->where('assigned_to', $u->id)->exists();
     }
 
     /** Admins and managers may change items in the departments they can edit. Everyone else (employees, viewers) may not. */

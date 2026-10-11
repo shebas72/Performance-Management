@@ -6,9 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class Invitation extends Model
 {
-    protected $fillable = ['company_id', 'email', 'role', 'token_hash', 'invited_by', 'expires_at', 'accepted_at', 'revoked_at'];
+    protected $fillable = ['company_id', 'email', 'role', 'token_hash', 'invited_by', 'expires_at', 'accepted_at', 'revoked_at',
+        'access_scope', 'manager_id', 'department_ids', 'access_department_ids',
+    ];
 
-    protected $casts = ['expires_at' => 'datetime', 'accepted_at' => 'datetime', 'revoked_at' => 'datetime'];
+    protected $casts = ['expires_at' => 'datetime', 'accepted_at' => 'datetime', 'revoked_at' => 'datetime',
+        'department_ids' => 'array', 'access_department_ids' => 'array',
+    ];
 
     public function inviter()
     {

@@ -26,7 +26,7 @@ class InitiativeController extends Controller
     use ResolvesTenant;
 
     private const STATUSES = ['not_started', 'in_progress', 'completed', 'delayed', 'cancelled'];
-    private const WITH     = ['department:id,name,name_ar', 'objective:id,code,name,name_ar', 'owner:id,name', 'tasks'];
+    private const WITH     = ['department:id,name,name_ar', 'objective:id,code,name,name_ar', 'owner:id,name', 'tasks.assignee:id,name'];
 
     public function __construct(private ProgressRollup $rollup, private AccessScope $access) {}
 
@@ -37,7 +37,7 @@ class InitiativeController extends Controller
             'project_id' => ['nullable', 'integer'], 'status' => ['nullable', Rule::in(self::STATUSES)],
         ]);
 
-        $rows = $this->access->scopeVisible(Initiative::with(self::WITH)->where('company_id', $this->companyId($request)), $request->user())
+        $rows = $this->access->scopeInitiatives(Initiative::with(self::WITH)->where('company_id', $this->companyId($request)), $request->user())
             ->when($request->filled('year'), fn ($q) => $q->where('year', $request->integer('year')))
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->when($request->filled('strategic_objective_id'), fn ($q) => $q->where('strategic_objective_id', $request->integer('strategic_objective_id')))
@@ -138,7 +138,8 @@ class InitiativeController extends Controller
     {
         $i = $this->find($request, $id);
         $this->authorizeTask($request, $i);
-        $data = $request->validate($this->taskRules());
+        $data = $request->validate($this->taskRules($i->company_id));
+        $this->checkAssignee($i->company_id, $data);
 
         $t = new ExecutionPlanTask();
         $t->forceFill(array_merge($data, [
@@ -150,15 +151,28 @@ class InitiativeController extends Controller
         return response()->json(['data' => $this->shapeMany(collect([$i->fresh(self::WITH)]))[0]], 201);
     }
 
+    /**
+     * Admins/managers of the department and the initiative's owner change everything on a task.
+     * The person a task is assigned to (never a read-only viewer) may report the task's completion and nothing else.
+     */
     public function updateTask(Request $request, int $id)
     {
         $t = $this->findTask($request, $id);
-        $this->authorizeTask($request, $t->initiative);
-        $data = $request->validate($this->taskRules());
-        $t->forceFill($data + ['status' => $this->taskStatus((float) $data['completion_pct'])])->save();
-        $this->rollup->initiative($t->initiative);
+        $u = $request->user();
+        $i = $t->initiative;
 
-        return response()->json(['data' => $this->shapeMany(collect([$t->initiative->fresh(self::WITH)]))[0]]);
+        if ($this->access->canWorkOn($u, $i->department_id, $i->owner_id)) {
+            $data = $request->validate($this->taskRules($i->company_id));
+            $this->checkAssignee($i->company_id, $data, $t);
+        } else {
+            abort_unless($this->isAssignee($u, $t), 403, 'You do not have permission to change this task.');
+            $data = $request->validate(['completion_pct' => ['required', 'numeric', 'between:0,100']]);
+        }
+
+        $t->forceFill($data + ['status' => $this->taskStatus((float) $data['completion_pct'])])->save();
+        $this->rollup->initiative($i);
+
+        return response()->json(['data' => $this->shapeMany(collect([$i->fresh(self::WITH)]))[0]]);
     }
 
     public function destroyTask(Request $request, int $id)
@@ -179,7 +193,7 @@ class InitiativeController extends Controller
         $cid  = $this->companyId($request);
         $year = $request->integer('year') ?: (int) Initiative::where('company_id', $cid)->max('year') ?: (int) date('Y');
 
-        $items = $this->access->scopeVisible(Initiative::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year), $request->user())
+        $items = $this->access->scopeInitiatives(Initiative::with('department:id,name,name_ar')->where('company_id', $cid)->where('year', $year), $request->user())
             ->when($request->filled('department_id'), fn ($q) => $q->where('department_id', $request->integer('department_id')))
             ->orderBy('code')->orderBy('id')->get();
 
@@ -231,12 +245,22 @@ class InitiativeController extends Controller
         ];
     }
 
-    private function taskRules(): array
+    private function taskRules(int $cid): array
     {
         return [
             'task_name' => ['required', 'string', 'max:255'], 'task_name_ar' => ['nullable', 'string', 'max:255'],
             'due_date' => ['nullable', 'date'], 'completion_pct' => ['required', 'numeric', 'between:0,100'],
+            'assigned_to' => ['sometimes', 'nullable', 'integer', Rule::exists('users', 'id')->where('company_id', $cid)],
         ];
+    }
+
+    /** A task can only be given to an active person of the company (keeping a person who was deactivated later is fine). */
+    private function checkAssignee(int $cid, array $data, ?ExecutionPlanTask $task = null): void
+    {
+        if (empty($data['assigned_to'])) return;
+        if ($task && (int) $task->assigned_to === (int) $data['assigned_to']) return;
+
+        abort_unless(User::where('company_id', $cid)->where('is_active', true)->where('is_super_admin', false)->whereKey($data['assigned_to'])->exists(), 422, 'Tasks can only be assigned to active members of the company.');
     }
 
     private function taskStatus(float $pct): string
@@ -270,7 +294,7 @@ class InitiativeController extends Controller
     private function find(Request $request, int $id): Initiative
     {
         $i = Initiative::with(self::WITH)->where('company_id', $this->companyId($request))->findOrFail($id);
-        abort_unless($this->access->canSee($request->user(), $i->department_id, $i->owner_id), 404);
+        abort_unless($this->access->canSeeInitiative($request->user(), $i), 404);
 
         return $i;
     }
@@ -278,7 +302,7 @@ class InitiativeController extends Controller
     private function findTask(Request $request, int $id): ExecutionPlanTask
     {
         $t = ExecutionPlanTask::with('initiative')->where('company_id', $this->companyId($request))->findOrFail($id);
-        abort_unless($t->initiative && $this->access->canSee($request->user(), $t->initiative->department_id, $t->initiative->owner_id), 404);
+        abort_unless($t->initiative && $this->access->canSeeInitiative($request->user(), $t->initiative), 404);
 
         return $t;
     }
@@ -328,6 +352,11 @@ class InitiativeController extends Controller
         abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to modify this resource.');
     }
 
+    private function isAssignee(User $u, ExecutionPlanTask $t): bool
+    {
+        return $t->assigned_to !== null && (int) $t->assigned_to === $u->id && ! $u->hasRole('viewer');
+    }
+
     private function authorizeTask(Request $request, Initiative $i): void
     {
         abort_unless($this->access->canWorkOn($request->user(), $i->department_id, $i->owner_id), 403, 'You do not have permission to change this initiative\'s plan.');
@@ -338,6 +367,7 @@ class InitiativeController extends Controller
     {
         $ids      = $items->pluck('id');
         $me       = request()->user();
+        $isViewer = $me?->hasRole('viewer') ?? true;
         $view     = $me ? $this->access->viewIds($me) : null; // null = unrestricted
         $projects = DB::table('initiative_project as ip')->join('projects as p', 'p.id', '=', 'ip.project_id')->leftJoin('departments as d', 'd.id', '=', 'p.department_id')
             ->whereIn('ip.initiative_id', $ids)
@@ -365,6 +395,9 @@ class InitiativeController extends Controller
                 'tasks' => $i->tasks->map(fn ($t) => [
                     'id' => $t->id, 'task_name' => $t->task_name, 'task_name_ar' => $t->task_name_ar, 'due_date' => $t->due_date?->toDateString(),
                     'completion_pct' => (float) $t->completion_pct,
+                    'assigned_to' => $t->assigned_to ? (int) $t->assigned_to : null, 'assignee' => $t->assignee?->only(['id', 'name']),
+                    // may this viewer change the task: everything (plan editors) or just its completion (the assignee)
+                    'can_update' => $me && ($this->access->canWorkOn($me, $i->department_id, $i->owner_id) || (! $isViewer && $t->assigned_to !== null && (int) $t->assigned_to === $me->id)),
                     // 'overdue' is worked out when read, so it never goes stale.
                     'status' => $t->status !== 'completed' && $t->due_date && $t->due_date->isPast() && ! $t->due_date->isToday() ? 'overdue' : $t->status,
                 ])->values()->all(),
