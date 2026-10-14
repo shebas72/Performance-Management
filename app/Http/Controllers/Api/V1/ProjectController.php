@@ -263,7 +263,7 @@ class ProjectController extends Controller
 
     private function authorizeWrite(Request $request): void
     {
-        abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to modify this resource.');
+        abort_unless($request->user()->hasPermission('projects.manage'), 403, 'You do not have permission to modify this resource.');
     }
 
     private function shape(Project $p, array $objectives = []): array

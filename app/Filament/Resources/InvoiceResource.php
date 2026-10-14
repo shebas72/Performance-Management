@@ -19,9 +19,18 @@ class InvoiceResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
+    public static function canAccess(): bool
+
+    {
+
+        return \App\Support\AppMode::saas();
+
+    }
+
+
     public static function shouldRegisterNavigation(): bool
     {
-        return config('spms.mode') === 'saas';
+        return \App\Support\AppMode::saas();
     }
 
     public static function form(Form $form): Form

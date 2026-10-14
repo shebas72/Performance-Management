@@ -8,6 +8,8 @@ use App\Models\Company;
 use App\Models\Invitation;
 use App\Models\User;
 use App\Services\PlanLimits;
+use App\Services\RolePermissions;
+use App\Support\Permissions;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -24,10 +26,14 @@ class TeamController extends Controller
 {
     use ResolvesTenant;
 
-    private const ROLES = ['admin', 'manager', 'employee', 'viewer'];
     private const INVITE_DAYS = 7;
 
     public function __construct(private PlanLimits $limits) {}
+
+    private function roles(): RolePermissions
+    {
+        return RolePermissions::resolve();
+    }
 
     /* ---- users ---- */
 
@@ -39,7 +45,7 @@ class TeamController extends Controller
 
         return response()->json([
             'data' => $users->map(fn ($u) => $this->shapeUser($u, $links->get($u->id, collect())))->values(),
-            'meta' => ['roles' => self::ROLES, 'me' => $request->user()->id],
+            'meta' => ['roles' => $this->roles()->keys($cid), 'role_labels' => $this->roles()->labels($cid), 'me' => $request->user()->id],
         ]);
     }
 
@@ -48,7 +54,7 @@ class TeamController extends Controller
         $cid  = $this->requireAdmin($request);
         $user = User::where('company_id', $cid)->where('is_super_admin', false)->findOrFail($id);
         $data = $request->validate([
-            'role' => ['sometimes', Rule::in(self::ROLES)], 'is_active' => ['sometimes', 'boolean'], 'name' => ['sometimes', 'string', 'max:255'],
+            'role' => ['sometimes', Rule::in($this->roles()->keys($cid))], 'is_active' => ['sometimes', 'boolean'], 'name' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
             'password' => ['sometimes', 'string', 'min:8'],
         ] + $this->accessRules($cid));
@@ -70,10 +76,7 @@ class TeamController extends Controller
             if (isset($data['password'])) $user->forceFill(['password' => Hash::make($data['password'])]);
             if (isset($data['is_active'])) $user->forceFill(['is_active' => $data['is_active']]);
             $user->save();
-            if (isset($data['role'])) {
-                Role::findOrCreate($data['role']);
-                $user->syncRoles([$data['role']]);
-            }
+            if (isset($data['role'])) $this->assignRole($user, $data['role']);
             $this->applyAccess($user, $data);
             if (isset($data['password']) || (isset($data['is_active']) && ! $data['is_active'])) {
                 $user->tokens()->delete(); // signs them out everywhere
@@ -92,7 +95,7 @@ class TeamController extends Controller
         $cid  = $this->requireAdmin($request);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'], 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'role' => ['required', Rule::in(self::ROLES)], 'password' => ['nullable', 'string', 'min:8'],
+            'role' => ['required', Rule::in($this->roles()->keys($cid))], 'password' => ['nullable', 'string', 'min:8'],
         ] + $this->accessRules($cid));
         $this->limits->assertCanAdd($cid, 'users');
         $plain = $data['password'] ?? Str::password(12, symbols: false);
@@ -103,8 +106,7 @@ class TeamController extends Controller
                 'company_id' => $cid, 'name' => $data['name'], 'email' => Str::lower($data['email']),
                 'password' => Hash::make($plain), 'email_verified_at' => now(), 'is_active' => true,
             ])->save();
-            Role::findOrCreate($data['role']);
-            $user->assignRole($data['role']);
+            $this->assignRole($user, $data['role']);
             $this->applyAccess($user, $data);
 
             return $user;
@@ -120,7 +122,7 @@ class TeamController extends Controller
         $users = User::where('company_id', $cid)->where('is_super_admin', false)->where('is_active', true)
             ->with('roles:id,name')->orderBy('name')->get(['id', 'name']);
 
-        return response()->json(['data' => $users->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => $u->roles->pluck('name')->first()])->values()]);
+        return response()->json(['data' => $users->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => $this->roles()->keyFor($u)])->values()]);
     }
 
     /* ---- invitations ---- */
@@ -136,11 +138,11 @@ class TeamController extends Controller
     public function invite(Request $request)
     {
         $cid  = $this->requireAdmin($request);
-        $data = $request->validate(['email' => ['required', 'email', 'max:255'], 'role' => ['required', Rule::in(self::ROLES)]] + $this->accessRules($cid));
+        $data = $request->validate(['email' => ['required', 'email', 'max:255'], 'role' => ['required', Rule::in($this->roles()->keys($cid))]] + $this->accessRules($cid));
         $email = Str::lower($data['email']);
 
         if (! empty($data['manager_id'])) {
-            abort_unless(User::where('company_id', $cid)->where('is_active', true)->find($data['manager_id'])?->hasAnyRole(['admin', 'manager']), 422, 'The manager must be an active admin or manager.');
+            abort_unless(User::where('company_id', $cid)->where('is_active', true)->find($data['manager_id'])?->hasPermission('team_report.lead'), 422, 'The manager must be an active person who can lead a team.');
         }
         $isAdminRole = $data['role'] === 'admin'; // admins always see everything, so no scope or departments are stored
 
@@ -188,7 +190,7 @@ class TeamController extends Controller
     {
         $inv = $this->usable($token);
 
-        return response()->json(['data' => ['email' => $inv->email, 'role' => $inv->role, 'company' => Company::find($inv->company_id)?->name]]);
+        return response()->json(['data' => ['email' => $inv->email, 'role' => $inv->role, 'role_label' => $this->roles()->label((int) $inv->company_id, $inv->role), 'company' => Company::find($inv->company_id)?->name]]);
     }
 
     public function accept(Request $request)
@@ -205,8 +207,7 @@ class TeamController extends Controller
                 'company_id' => $inv->company_id, 'name' => $data['name'], 'email' => $inv->email,
                 'password' => Hash::make($data['password']), 'email_verified_at' => now(), 'is_active' => true,
             ])->save();
-            Role::findOrCreate($inv->role);
-            $user->assignRole($inv->role);
+            $this->assignRole($user, $inv->role);
             $this->applyInvitationAccess($user, $inv);
             $inv->forceFill(['accepted_at' => now()])->save();
 
@@ -218,9 +219,24 @@ class TeamController extends Controller
 
     /* ---- helpers ---- */
 
+    /** Sets the user's role. Only the four built-in roles exist in Spatie (the admin one still marks a company admin for the last-admin guard). */
+    private function assignRole(User $user, string $key): void
+    {
+        if (! in_array($key, $this->roles()->keys((int) $user->company_id), true)) $key = 'viewer'; // the role was deleted after the invitation went out
+
+        $user->forceFill(['role_key' => $key])->save();
+        if (array_key_exists($key, Permissions::SYSTEM)) {
+            Role::findOrCreate($key);
+            $user->syncRoles([$key]);
+        } else {
+            $user->syncRoles([]);
+        }
+        $this->roles()->flush();
+    }
+
     private function requireAdmin(Request $request): int
     {
-        abort_unless($request->user()->hasRole('admin'), 403, 'Only company admins can manage the team.');
+        abort_unless($request->user()->hasPermission('team.manage'), 403, 'You do not have permission to manage the team.');
 
         return $this->companyId($request);
     }
@@ -263,7 +279,7 @@ class TeamController extends Controller
 
         $this->applyAccess($user, [
             'access_scope'          => in_array($inv->access_scope, ['own', 'all', 'selected'], true) ? $inv->access_scope : 'own',
-            'manager_id'            => $manager?->hasAnyRole(['admin', 'manager']) ? $manager->id : null,
+            'manager_id'            => $manager?->hasPermission('team_report.lead') ? $manager->id : null,
             'department_ids'        => $valid($inv->department_ids),
             'access_department_ids' => $valid($inv->access_department_ids),
         ]);
@@ -291,7 +307,7 @@ class TeamController extends Controller
         if (array_key_exists('manager_id', $data)) {
             if ($data['manager_id']) {
                 abort_if((int) $data['manager_id'] === $user->id, 422, 'A user cannot be their own manager.');
-                abort_unless(User::find($data['manager_id'])?->hasAnyRole(['admin', 'manager']), 422, 'The manager must have the admin or manager role.');
+                abort_unless(User::find($data['manager_id'])?->hasPermission('team_report.lead'), 422, 'The manager must have a role that can lead a team.');
             }
             $fill['manager_id'] = $data['manager_id'] ?: null;
         }
@@ -311,7 +327,7 @@ class TeamController extends Controller
         $ids = fn (string $kind) => $links->where('kind', $kind)->pluck('department_id')->map(fn ($v) => (int) $v)->values();
 
         return [
-            'id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $u->roles->pluck('name')->first(),
+            'id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $this->roles()->keyFor($u), 'is_lead' => $u->hasPermission('team_report.lead'),
             'is_active' => (bool) ($u->is_active ?? true), 'created_at' => $u->created_at?->toDateString(),
             'access_scope' => $u->access_scope ?? 'all', 'manager_id' => $u->manager_id ?? null,
             'department_ids' => $ids('member'), 'access_department_ids' => $ids('access'),

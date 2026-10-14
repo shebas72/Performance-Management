@@ -15,16 +15,14 @@ trait ResolvesTenant
     }
 
     /**
-     * Admin + manager may write; viewer may not.
+     * Roles with kpis.manage may write.
      * NOTE: if your Phase 3 controllers check roles differently, change only this method.
      */
     protected function authorizeWrite(Request $request): void
     {
         $user = $request->user();
 
-        $allowed = method_exists($user, 'hasAnyRole')
-            ? $user->hasAnyRole(['admin', 'manager'])
-            : in_array($user->role ?? null, ['admin', 'manager'], true);
+        $allowed = $user->hasPermission('kpis.manage');
 
         abort_if(! $allowed, 403, 'You do not have permission to modify KPI entries.');
     }

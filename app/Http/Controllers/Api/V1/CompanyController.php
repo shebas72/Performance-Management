@@ -24,14 +24,23 @@ class CompanyController extends Controller
     public function update(Request $request)
     {
         $c = $this->admin($request);
-        if ($request->input('default_language') === 'ar') $this->limits->assertFeature($c->id, 'arabic');
-        $c->forceFill($request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:255'], 'name_ar' => ['nullable', 'string', 'max:255'],
             'timezone' => ['nullable', 'timezone:all'], 'default_language' => ['nullable', 'in:en,ar'],
+            'arabic_enabled' => ['sometimes', 'boolean'],
             'team_report_visibility' => ['sometimes', 'in:colleagues,own'],
             // The month the fiscal year starts in, stored as MM-DD. Fiscal years start on the 1st.
             'fiscal_year_start' => ['sometimes', 'required', 'regex:/^(0[1-9]|1[0-2])-01$/'],
-        ]))->save();
+        ]);
+
+        // Arabic is a switch: off means English only (language switcher, Arabic fields, PDFs). Turning it on needs the plan's Arabic feature.
+        $arabic = array_key_exists('arabic_enabled', $data) ? (bool) $data['arabic_enabled'] : (bool) $c->arabic_enabled;
+        if ($arabic && ! $c->arabic_enabled) $this->limits->assertFeature($c->id, 'arabic');
+        abort_if(! $arabic && ($data['default_language'] ?? null) === 'ar', 422, 'Turn Arabic on before making it the default language.');
+        if ($arabic && ($data['default_language'] ?? null) === 'ar') $this->limits->assertFeature($c->id, 'arabic');
+        if (! $arabic && (($data['default_language'] ?? $c->default_language) === 'ar')) $data['default_language'] = 'en'; // switching Arabic off
+
+        $c->forceFill($data)->save();
 
         return response()->json(['data' => $this->shape($c)]);
     }
@@ -77,7 +86,7 @@ class CompanyController extends Controller
 
     private function admin(Request $request): Company
     {
-        abort_unless($request->user()->hasRole('admin'), 403, 'Only company admins can change the settings.');
+        abort_unless($request->user()->hasPermission('settings.manage'), 403, 'You do not have permission to change the settings.');
 
         return $this->company($request);
     }
@@ -85,7 +94,7 @@ class CompanyController extends Controller
     private function shape(Company $c): array
     {
         return [
-            'id' => $c->id, 'name' => $c->name, 'name_ar' => $c->name_ar, 'timezone' => $c->timezone, 'default_language' => $c->default_language,
+            'id' => $c->id, 'name' => $c->name, 'name_ar' => $c->name_ar, 'timezone' => $c->timezone, 'default_language' => $c->default_language, 'arabic_enabled' => (bool) $c->arabic_enabled,
             'logo_url' => $c->logo ? Storage::disk('public')->url($c->logo) : null,
             'team_report_visibility' => $c->team_report_visibility ?? 'colleagues',
             'fiscal_year_start' => $c->fiscal_year_start ?: '01-01',

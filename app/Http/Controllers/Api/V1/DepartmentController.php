@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Auth;
 
 class DepartmentController extends CompanyResourceController
 {
+    protected string $writePermission = 'departments.manage';
+
     protected string $model = Department::class;
     protected array $filterable = ['parent_id'];
 

@@ -178,7 +178,7 @@ class PdfReportController extends Controller
         $company = Company::findOrFail($this->companyId($request));
 
         $lang = $request->input('lang') ?: ($company->default_language === 'ar' ? 'ar' : 'en');
-        if ($lang === 'ar' && ! $this->limits->feature((int) $company->id, 'arabic')) $lang = 'en';
+        if (! in_array($lang, $company->enabledLanguages(), true)) $lang = 'en'; // Arabic switched off, or not in the plan
 
         $name = $lang === 'ar' && filled($company->name_ar) ? $company->name_ar : $company->name;
 

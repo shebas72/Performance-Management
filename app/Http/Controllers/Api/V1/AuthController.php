@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\User;
 use App\Services\AccessScope;
+use App\Support\AppMode;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -22,9 +23,8 @@ class AuthController extends Controller
      */
     public function register(Request $request)
     {
-        $mode = config('spms.mode');
-
-        if ($mode === 'standalone' && Company::query()->exists()) {
+        // Standalone is one organisation, created by the installer: public registration is always closed there.
+        if (AppMode::standalone()) {
             abort(403, 'Registration is closed.');
         }
 
@@ -112,13 +112,15 @@ class AuthController extends Controller
 
         return array_filter([
             'token' => $token,
-            'mode'  => config('spms.mode'),
+            'mode'  => AppMode::current(),
             'user'  => [
                 'id'         => $user->id,
                 'name'       => $user->name,
                 'email'      => $user->email,
                 'company_id' => $user->company_id,
-                'roles'      => $user->getRoleNames()->values(),
+                'roles'      => [\App\Services\RolePermissions::resolve()->keyFor($user)],
+                'role'       => $user->company_id ? \App\Services\RolePermissions::resolve()->roleInfo($user) : null,
+                'permissions' => \App\Services\RolePermissions::resolve()->permissionsFor($user),
                 // Department ids the user can see / edit (including sub-departments); null = all of them.
                 'access'     => $user->company_id ? [
                     'scope'               => $user->access_scope ?? 'all',
@@ -130,7 +132,16 @@ class AuthController extends Controller
                 'id' => $company->id, 'name' => $company->name, 'name_ar' => $company->name_ar,
                 'logo_url' => $company->logo ? Storage::disk('public')->url($company->logo) : null,
                 'features' => app(\App\Services\PlanLimits::class)->features($company->id),
+                'languages' => $company->enabledLanguages(),
             ] : null,
         ], fn ($v) => $v !== null);
+    }
+
+    /** Languages the sign-in page may offer: standalone = that company's setting; SaaS = both, as the company is unknown until sign-in. */
+    public function languages()
+    {
+        $langs = AppMode::saas() ? ['en', 'ar'] : (\App\Models\Company::query()->orderBy('id')->first()?->enabledLanguages() ?? ['en']);
+
+        return response()->json(['data' => ['languages' => $langs]]);
     }
 }

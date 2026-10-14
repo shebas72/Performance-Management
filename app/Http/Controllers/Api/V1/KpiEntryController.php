@@ -165,7 +165,7 @@ class KpiEntryController extends Controller
     /** Admins, managers and employees may enter data; viewers may not. */
     private function authorizeEntryWrite(Request $request): void
     {
-        abort_unless($request->user()->hasAnyRole(['admin', 'manager', 'employee']), 403, 'You do not have permission to modify KPI entries.');
+        abort_unless($request->user()->hasPermission('kpis.enter'), 403, 'You do not have permission to modify KPI entries.');
     }
 
     private function guardKpi(Request $request, Kpi $kpi): void

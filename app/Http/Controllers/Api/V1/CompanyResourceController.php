@@ -23,7 +23,7 @@ abstract class CompanyResourceController extends Controller
     protected array $searchable = ['name', 'name_ar'];
     protected array $filterable = [];
     protected string $orderBy = 'id';
-    protected array $writeRoles = ['admin', 'manager'];
+    protected string $writePermission = 'kpis.manage';
 
     /** Validation rules (array syntax). "sometimes" is added automatically on update. */
     abstract protected function rules(): array;
@@ -141,7 +141,7 @@ public function update(Request $request, $id)
         $user = $request->user();
 
         abort_unless(
-            $user && $user->hasAnyRole($this->writeRoles),
+            $user && $user->hasPermission($this->writePermission),
             403,
             'You do not have permission to modify this resource.'
         );

@@ -17,7 +17,7 @@ class PlatformStatsOverview extends BaseWidget
             Stat::make('Users', User::where('is_super_admin', false)->count()),
         ];
 
-        if (config('spms.mode') === 'saas') {
+        if (\App\Support\AppMode::saas()) {
             // ASSUMES: subscriptions.status, subscriptions.plan_id, plans.price_monthly
             $active = Subscription::where('status', 'active');
 

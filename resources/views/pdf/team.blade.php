@@ -41,7 +41,7 @@
     $rows = [];
     foreach ($t['people'] as $r) {
         $name = $r['unassigned'] ? $p->t('team.unassigned') : $p->x($r['name']);
-        $role = $r['role'] ? $p->t('role.'.$r['role']) : '';
+        $role = ! empty($r['role_label']) ? $p->name($r['role_label']) : '';
         $deps = collect($r['departments'])->map(fn ($d) => $p->rtl && filled($d['name_ar']) ? $d['name_ar'] : $d['name'])->implode($p->rtl ? '، ' : ', ');
         $cell = new \Illuminate\Support\HtmlString('<b>'.$name.'</b>'.($role !== '' ? '<div class="muted" style="font-size:7.5px;">'.$role.'</div>' : ''));
         $w = fn ($b) => $b['count'] ? $b['count'].($b['avg_pct'] !== null ? ' · '.$p->pct($b['avg_pct'], 0) : '') : '—';

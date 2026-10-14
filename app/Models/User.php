@@ -29,6 +29,12 @@ class User extends Authenticatable implements FilamentUser
         ];
     }
 
+    /** Whether the user's role grants a permission (see App\Support\Permissions). */
+    public function hasPermission(string $permission): bool
+    {
+        return \App\Services\RolePermissions::resolve()->allows($this, $permission);
+    }
+
     public function canAccessPanel(Panel $panel): bool
     {
         return $panel->getId() === 'super-admin' && (bool) $this->is_super_admin;

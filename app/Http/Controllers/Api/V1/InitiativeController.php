@@ -349,12 +349,12 @@ class InitiativeController extends Controller
 
     private function authorizeWrite(Request $request): void
     {
-        abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to modify this resource.');
+        abort_unless($request->user()->hasPermission('projects.manage'), 403, 'You do not have permission to modify this resource.');
     }
 
     private function isAssignee(User $u, ExecutionPlanTask $t): bool
     {
-        return $t->assigned_to !== null && (int) $t->assigned_to === $u->id && ! $u->hasRole('viewer');
+        return $t->assigned_to !== null && (int) $t->assigned_to === $u->id && $u->hasPermission('work.own');
     }
 
     private function authorizeTask(Request $request, Initiative $i): void
@@ -367,7 +367,7 @@ class InitiativeController extends Controller
     {
         $ids      = $items->pluck('id');
         $me       = request()->user();
-        $isViewer = $me?->hasRole('viewer') ?? true;
+        $isViewer = ! ($me?->hasPermission('work.own') ?? false); // read-only: no work.own
         $view     = $me ? $this->access->viewIds($me) : null; // null = unrestricted
         $projects = DB::table('initiative_project as ip')->join('projects as p', 'p.id', '=', 'ip.project_id')->leftJoin('departments as d', 'd.id', '=', 'p.department_id')
             ->whereIn('ip.initiative_id', $ids)

@@ -89,11 +89,11 @@ class CorrectiveProposalController extends Controller
     /** POST {action: approve|reject|complete}. approve/reject only from pending, complete only from in_progress. */
     public function review(Request $request, int $id)
     {
-        abort_unless($request->user()->hasAnyRole(['admin', 'manager']), 403, 'You do not have permission to review proposals.');
+        abort_unless($request->user()->hasPermission('proposals.review'), 403, 'You do not have permission to review proposals.');
 
         $action = $request->validate(['action' => ['required', Rule::in(['approve', 'reject', 'complete'])]])['action'];
         $p      = $this->find($request, $id);
-        abort_unless($this->access->canManage($request->user(), $p->department_id === null ? null : (int) $p->department_id), 403, 'You can only review proposals of your own departments.');
+        abort_unless($this->access->canReview($request->user(), $p->department_id === null ? null : (int) $p->department_id), 403, 'You can only review proposals of your own departments.');
 
         $from = ['approve' => 'pending', 'reject' => 'pending', 'complete' => 'in_progress'][$action];
         abort_unless($p->status === $from, 422, 'This action is not available for the proposal\'s current status.');
@@ -136,7 +136,7 @@ class CorrectiveProposalController extends Controller
     {
         $u = $request->user();
         abort_unless(
-            $this->access->canManage($u, $p->department_id === null ? null : (int) $p->department_id) || ($p->submitted_by === $u->id && $p->status === 'pending'),
+            $this->access->canReview($u, $p->department_id === null ? null : (int) $p->department_id) || ($p->submitted_by === $u->id && $p->status === 'pending'),
             403, 'You do not have permission to modify this proposal.'
         );
     }

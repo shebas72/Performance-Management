@@ -35,8 +35,8 @@ class TeamPerformanceService
     public function build(User $viewer, int $year, int $month): array
     {
         $cid      = (int) $viewer->company_id;
-        $isAdmin  = $viewer->hasRole('admin');
-        $isLead   = $viewer->hasAnyRole(['admin', 'manager']);
+        $isAdmin  = $viewer->hasPermission('access.all_departments');
+        $isLead   = $viewer->hasPermission('team_report.lead');
         $mode     = Company::whereKey($cid)->value('team_report_visibility') ?: 'colleagues';
         $selfOnly = ! $isLead && $mode === 'own';
 
@@ -104,7 +104,7 @@ class TeamPerformanceService
             $mine = $owned->get($u->id, collect())->values();
 
             return [
-                'user_id' => $u->id, 'name' => $u->name, 'role' => $u->roles->pluck('name')->first(),
+                'user_id' => $u->id, 'name' => $u->name, 'role' => RolePermissions::resolve()->keyFor($u), 'role_label' => RolePermissions::resolve()->label((int) $u->company_id, RolePermissions::resolve()->keyFor($u)),
                 'is_active' => (bool) ($u->is_active ?? true), 'is_me' => $u->id === $viewer->id, 'unassigned' => false,
                 'departments' => $links->get($u->id, collect())->pluck('department_id')->map(fn ($d) => $depts->get((int) $d))->filter()
                     ->map(fn ($d) => ['id' => $d->id, 'name' => $d->name, 'name_ar' => $d->name_ar])->values(),
@@ -118,7 +118,7 @@ class TeamPerformanceService
 
         if ($unowned->isNotEmpty()) {
             $rows->push([
-                'user_id' => null, 'name' => null, 'role' => null, 'is_active' => true, 'is_me' => false, 'unassigned' => true, 'departments' => [],
+                'user_id' => null, 'name' => null, 'role' => null, 'role_label' => null, 'is_active' => true, 'is_me' => false, 'unassigned' => true, 'departments' => [],
             ] + $this->metrics($unowned, $cur, $ytd, $expected, $missing) + [
                 'data' => $this->dataBlock($unowned, $expected, $missing) + ['entries_logged' => 0],
                 'projects' => $this->workBlock(collect(), []), 'initiatives' => $this->workBlock(collect(), []),
@@ -235,7 +235,7 @@ class TeamPerformanceService
 
     private function teams(User $viewer, bool $isAdmin, Collection $users, Collection $links, Collection $depts, Collection $owned, array $cur, array $ytd, array $expected, array $missing): array
     {
-        $managers = $isAdmin ? $users->filter(fn (User $u) => $u->is_active && $u->hasRole('manager')) : collect([$viewer])->filter(fn (User $u) => $u->hasRole('manager'));
+        $managers = $isAdmin ? $users->filter(fn (User $u) => $u->is_active && $u->hasPermission('team_report.lead') && ! $u->hasPermission('access.all_departments')) : collect([$viewer])->filter(fn (User $u) => $u->hasPermission('team_report.lead'));
         $out = [];
 
         foreach ($managers as $m) {

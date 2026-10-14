@@ -19,9 +19,18 @@ class PlanResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
 
+    public static function canAccess(): bool
+
+    {
+
+        return \App\Support\AppMode::saas();
+
+    }
+
+
     public static function shouldRegisterNavigation(): bool
     {
-        return config('spms.mode') === 'saas';
+        return \App\Support\AppMode::saas();
     }
 
     public static function form(Form $form): Form
@@ -62,6 +71,8 @@ class PlanResource extends Resource
                 Forms\Components\Toggle::make('has_arabic')
                     ->required(),
                 Forms\Components\Toggle::make('has_projects')
+                    ->required(),
+                Forms\Components\Toggle::make('has_custom_roles')
                     ->required(),
                 Forms\Components\Toggle::make('is_active')
                     ->required(),
@@ -104,6 +115,8 @@ class PlanResource extends Resource
                 Tables\Columns\IconColumn::make('has_arabic')
                     ->boolean(),
                 Tables\Columns\IconColumn::make('has_projects')
+                    ->boolean(),
+                Tables\Columns\IconColumn::make('has_custom_roles')
                     ->boolean(),
                 Tables\Columns\IconColumn::make('is_active')
                     ->boolean(),

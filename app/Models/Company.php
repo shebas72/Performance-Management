@@ -12,14 +12,21 @@ class Company extends Model
 {
     protected $fillable = [
         'name', 'name_ar', 'slug', 'logo', 'timezone',
-        'default_language', 'plan', 'app_mode',
+        'default_language', 'arabic_enabled', 'plan', 'app_mode',
         'fiscal_year_start', 'trial_ends_at', 'is_active', 'team_report_visibility',
     ];
 
     protected $casts = [
         'trial_ends_at' => 'datetime',
         'is_active' => 'boolean',
+        'arabic_enabled' => 'boolean',
     ];
+
+    /** Languages this company's people can use: English always, Arabic when the company switched it on and the plan allows it. */
+    public function enabledLanguages(): array
+    {
+        return $this->arabic_enabled && app(\App\Services\PlanLimits::class)->feature((int) $this->id, 'arabic') ? ['en', 'ar'] : ['en'];
+    }
 
     public function users(): HasMany { return $this->hasMany(User::class); }
     public function departments(): HasMany { return $this->hasMany(Department::class); }

@@ -9,6 +9,7 @@ use App\Models\Kpi;
 use App\Models\Plan;
 use App\Models\Subscription;
 use App\Models\User;
+use App\Support\AppMode;
 use Illuminate\Http\Exceptions\HttpResponseException;
 
 /**
@@ -22,13 +23,13 @@ use Illuminate\Http\Exceptions\HttpResponseException;
 class PlanLimits
 {
     public const RESOURCES = ['kpis', 'users', 'departments'];
-    public const FEATURES  = ['pdf_export', 'arabic', 'projects'];
+    public const FEATURES  = ['pdf_export', 'arabic', 'projects', 'custom_roles'];
 
     private array $plans = [];
 
     public function plan(int $cid): ?Plan
     {
-        if (config('spms.mode') !== 'saas') return null;
+        if (! AppMode::saas()) return null;
         if (array_key_exists($cid, $this->plans)) return $this->plans[$cid];
 
         $plan = null;
@@ -93,7 +94,7 @@ class PlanLimits
     {
         if ($this->feature($cid, $feature)) return;
 
-        $label = ['pdf_export' => 'PDF export', 'arabic' => 'Arabic', 'projects' => 'Projects and initiatives'][$feature];
+        $label = ['pdf_export' => 'PDF export', 'arabic' => 'Arabic', 'projects' => 'Projects and initiatives', 'custom_roles' => 'Custom roles'][$feature] ?? $feature;
         $this->refuse("{$label} is not included in your plan. Upgrade your plan to use it.", 'plan_feature', ['feature' => $feature]);
     }
 
@@ -107,7 +108,9 @@ class PlanLimits
     {
         $plan = $this->plan($cid);
 
+        // Standalone has no plans at all: the screen shows no plan card and every limit is empty.
         return [
+            'mode'     => AppMode::current(),
             'plan'     => $plan ? ['id' => $plan->id, 'name' => $plan->name, 'name_ar' => $plan->name_ar] : null,
             'limits'   => collect(self::RESOURCES)->mapWithKeys(fn ($r) => [$r => ['limit' => $this->limit($cid, $r), 'used' => $this->used($cid, $r)]])->all(),
             'features' => $this->features($cid),

@@ -21,6 +21,8 @@ use App\Http\Controllers\Api\V1\TeamPerformanceController;
 use App\Http\Controllers\Api\V1\PdfReportController;
 use App\Http\Controllers\Api\V1\KpiDeletionController;
 use App\Http\Middleware\RequirePlanFeature;
+use App\Http\Middleware\RequirePermission;
+use App\Http\Controllers\Api\V1\RoleController;
 
 
 Route::prefix('v1')->group(function () {
@@ -28,6 +30,7 @@ Route::prefix('v1')->group(function () {
     // Public
     Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
+    Route::get('auth/languages', [AuthController::class, 'languages'])->middleware('throttle:60,1');
     Route::get('auth/invitations/{token}', [TeamController::class, 'showInvite'])->middleware('throttle:20,1');
     Route::post('auth/accept-invite', [TeamController::class, 'accept'])->middleware('throttle:10,1');
    
@@ -88,7 +91,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::get('reports/team-performance', [TeamPerformanceController::class, 'index']);
         // PDF reports: plan feature pdf_export; throttled because each one renders a document.
-        Route::middleware(['throttle:20,1', RequirePlanFeature::class.':pdf_export'])->prefix('reports/pdf')->group(function () {
+        Route::middleware(['throttle:20,1', RequirePlanFeature::class.':pdf_export', RequirePermission::class.':reports.export'])->prefix('reports/pdf')->group(function () {
             Route::get('dashboard', [PdfReportController::class, 'dashboard']);
             Route::get('objectives', [PdfReportController::class, 'objectives']);
             Route::get('departments', [PdfReportController::class, 'departments']);
@@ -96,6 +99,14 @@ Route::prefix('v1')->group(function () {
             Route::get('kpis/{id}', [PdfReportController::class, 'kpi'])->whereNumber('id');
         });
         Route::get('kpi-deletions', [KpiDeletionController::class, 'index']);
+
+        // Roles and the permission matrix (team.manage). Changing roles needs the plan's custom_roles feature.
+        Route::get('roles', [RoleController::class, 'index']);
+        Route::middleware(RequirePlanFeature::class.':custom_roles')->group(function () {
+            Route::post('roles', [RoleController::class, 'store']);
+            Route::put('roles/{id}', [RoleController::class, 'update'])->whereNumber('id');
+            Route::delete('roles/{id}', [RoleController::class, 'destroy'])->whereNumber('id');
+        });
         Route::get('users/lookup', [TeamController::class, 'lookup']);
         Route::get('users', [TeamController::class, 'users']);
         Route::put('users/{id}', [TeamController::class, 'updateUser'])->whereNumber('id');

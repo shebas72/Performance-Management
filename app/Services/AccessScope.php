@@ -25,7 +25,7 @@ class AccessScope
     {
         if (array_key_exists($u->id, $this->view)) return $this->view[$u->id];
 
-        if ($u->hasRole('admin') || ($u->access_scope ?? 'all') === 'all') return $this->view[$u->id] = null;
+        if ($u->hasPermission('access.all_departments') || ($u->access_scope ?? 'all') === 'all') return $this->view[$u->id] = null;
 
         $kind = $u->access_scope === 'selected' ? 'access' : 'member';
 
@@ -36,7 +36,7 @@ class AccessScope
     {
         if (array_key_exists($u->id, $this->edit)) return $this->edit[$u->id];
 
-        if ($u->hasRole('admin')) return $this->edit[$u->id] = null;
+        if ($u->hasPermission('access.all_departments')) return $this->edit[$u->id] = null;
 
         $members = $this->assigned($u, 'member');
         $view    = $this->viewIds($u);
@@ -120,16 +120,22 @@ class AccessScope
             || ExecutionPlanTask::where('company_id', $u->company_id)->where('initiative_id', $i->id)->where('assigned_to', $u->id)->exists();
     }
 
-    /** Admins and managers may change items in the departments they can edit. Everyone else (employees, viewers) may not. */
+    /** Roles with projects.manage may change projects and initiatives in the departments they can edit. */
     public function canManage(User $u, ?int $departmentId): bool
     {
-        return $u->hasAnyRole(['admin', 'manager']) && $this->canEdit($u, $departmentId);
+        return $u->hasPermission('projects.manage') && $this->canEdit($u, $departmentId);
     }
 
-    /** Owners (not read-only viewers) may report progress and maintain the plan of what they own. */
+    /** Roles with proposals.review may review corrective proposals of the departments they can edit. */
+    public function canReview(User $u, ?int $departmentId): bool
+    {
+        return $u->hasPermission('proposals.review') && $this->canEdit($u, $departmentId);
+    }
+
+    /** Owners (roles with work.own, so not read-only viewers) may report progress and maintain the plan of what they own. */
     public function canWorkOn(User $u, ?int $departmentId, ?int $ownerId): bool
     {
-        return $this->canManage($u, $departmentId) || ($ownerId !== null && $ownerId === $u->id && ! $u->hasRole('viewer'));
+        return $this->canManage($u, $departmentId) || ($ownerId !== null && $ownerId === $u->id && $u->hasPermission('work.own'));
     }
 
     /** The departments a user belongs to (kind member), with their sub-departments. Empty when none are assigned. Used for team reports. */
