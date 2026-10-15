@@ -25,7 +25,7 @@ class Company extends Model
     /** Languages this company's people can use: English always, Arabic when the company switched it on and the plan allows it. */
     public function enabledLanguages(): array
     {
-        return $this->arabic_enabled && app(\App\Services\PlanLimits::class)->feature((int) $this->id, 'arabic') ? ['en', 'ar'] : ['en'];
+        return $this->arabic_enabled && app(\App\Services\Limits::class)->feature((int) $this->id, 'arabic') ? ['en', 'ar'] : ['en'];
     }
 
     public function users(): HasMany { return $this->hasMany(User::class); }
@@ -36,7 +36,6 @@ class Company extends Model
     public function kpis(): HasMany { return $this->hasMany(Kpi::class); }
     public function projects(): HasMany { return $this->hasMany(Project::class); }
     public function initiatives(): HasMany { return $this->hasMany(Initiative::class); }
-    public function subscription(): HasOne { return $this->hasOne(Subscription::class)->latestOfMany(); }
 
     public function activeStrategyHouse(): HasOne
     {

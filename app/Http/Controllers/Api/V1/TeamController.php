@@ -7,7 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Invitation;
 use App\Models\User;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use App\Services\RolePermissions;
 use App\Support\Permissions;
 use Illuminate\Http\Request;
@@ -28,7 +28,7 @@ class TeamController extends Controller
 
     private const INVITE_DAYS = 7;
 
-    public function __construct(private PlanLimits $limits) {}
+    public function __construct(private Limits $limits) {}
 
     private function roles(): RolePermissions
     {

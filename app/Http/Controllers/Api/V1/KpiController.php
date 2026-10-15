@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Kpi;
 use App\Services\AccessScope;
 use App\Services\KpiChangeLogger;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
@@ -13,7 +13,7 @@ class KpiController extends CompanyResourceController
 {
     protected string $model = Kpi::class;
 
-    public function __construct(private KpiChangeLogger $changes, private AccessScope $access, private PlanLimits $limits) {}
+    public function __construct(private KpiChangeLogger $changes, private AccessScope $access, private Limits $limits) {}
 
     protected array $searchable = ['name', 'name_ar', 'code'];
     protected array $filterable = [

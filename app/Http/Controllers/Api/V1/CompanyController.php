@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\Company;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -14,7 +14,7 @@ class CompanyController extends Controller
 {
     use ResolvesTenant;
 
-    public function __construct(private PlanLimits $limits) {}
+    public function __construct(private Limits $limits) {}
 
     public function show(Request $request)
     {
@@ -43,14 +43,6 @@ class CompanyController extends Controller
         $c->forceFill($data)->save();
 
         return response()->json(['data' => $this->shape($c)]);
-    }
-
-    /** Plan name, limits with current use, and feature flags. Admin-only (it shows how close the company is to its limits). */
-    public function plan(Request $request)
-    {
-        $c = $this->admin($request);
-
-        return response()->json(['data' => $this->limits->summary($c->id)]);
     }
 
     public function uploadLogo(Request $request)

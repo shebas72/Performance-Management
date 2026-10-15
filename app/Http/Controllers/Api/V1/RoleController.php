@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\V1\Concerns\ResolvesTenant;
 use App\Http\Controllers\Controller;
 use App\Models\CompanyRole;
 use App\Models\User;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use App\Services\RolePermissions;
 use App\Support\Permissions;
 use Illuminate\Http\Request;
@@ -21,7 +21,7 @@ class RoleController extends Controller
 {
     use ResolvesTenant;
 
-    public function __construct(private PlanLimits $limits) {}
+    public function __construct(private Limits $limits) {}
 
     public function index(Request $request)
     {

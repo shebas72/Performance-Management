@@ -20,7 +20,7 @@ use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\TeamPerformanceController;
 use App\Http\Controllers\Api\V1\PdfReportController;
 use App\Http\Controllers\Api\V1\KpiDeletionController;
-use App\Http\Middleware\RequirePlanFeature;
+use App\Http\Middleware\RequireFeature;
 use App\Http\Middleware\RequirePermission;
 use App\Http\Controllers\Api\V1\RoleController;
 
@@ -28,7 +28,6 @@ use App\Http\Controllers\Api\V1\RoleController;
 Route::prefix('v1')->group(function () {
 
     // Public
-    Route::post('auth/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
     Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:10,1');
     Route::get('auth/languages', [AuthController::class, 'languages'])->middleware('throttle:60,1');
     Route::get('auth/invitations/{token}', [TeamController::class, 'showInvite'])->middleware('throttle:20,1');
@@ -68,8 +67,8 @@ Route::prefix('v1')->group(function () {
         Route::put('corrective-proposals/{id}', [CorrectiveProposalController::class, 'update'])->whereNumber('id');
         Route::delete('corrective-proposals/{id}', [CorrectiveProposalController::class, 'destroy'])->whereNumber('id');
         Route::post('corrective-proposals/{id}/review', [CorrectiveProposalController::class, 'review'])->whereNumber('id');
-        // Projects, initiatives and the execution plan belong to plans with has_projects.
-        Route::middleware(RequirePlanFeature::class.':projects')->group(function () {
+        // Projects, initiatives and the execution plan: always on in standalone, a plan feature in SaaS.
+        Route::middleware(RequireFeature::class.':projects')->group(function () {
             Route::get('dashboard/projects', [ProjectController::class, 'performance']);
             Route::get('projects', [ProjectController::class, 'index']);
             Route::post('projects', [ProjectController::class, 'store']);
@@ -90,8 +89,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('execution-plan-tasks/{id}', [InitiativeController::class, 'destroyTask'])->whereNumber('id');
         });
         Route::get('reports/team-performance', [TeamPerformanceController::class, 'index']);
-        // PDF reports: plan feature pdf_export; throttled because each one renders a document.
-        Route::middleware(['throttle:20,1', RequirePlanFeature::class.':pdf_export', RequirePermission::class.':reports.export'])->prefix('reports/pdf')->group(function () {
+        // PDF reports: feature pdf_export; throttled because each one renders a document.
+        Route::middleware(['throttle:20,1', RequireFeature::class.':pdf_export', RequirePermission::class.':reports.export'])->prefix('reports/pdf')->group(function () {
             Route::get('dashboard', [PdfReportController::class, 'dashboard']);
             Route::get('objectives', [PdfReportController::class, 'objectives']);
             Route::get('departments', [PdfReportController::class, 'departments']);
@@ -100,9 +99,9 @@ Route::prefix('v1')->group(function () {
         });
         Route::get('kpi-deletions', [KpiDeletionController::class, 'index']);
 
-        // Roles and the permission matrix (team.manage). Changing roles needs the plan's custom_roles feature.
+        // Roles and the permission matrix (team.manage). Changing roles needs the custom_roles feature.
         Route::get('roles', [RoleController::class, 'index']);
-        Route::middleware(RequirePlanFeature::class.':custom_roles')->group(function () {
+        Route::middleware(RequireFeature::class.':custom_roles')->group(function () {
             Route::post('roles', [RoleController::class, 'store']);
             Route::put('roles/{id}', [RoleController::class, 'update'])->whereNumber('id');
             Route::delete('roles/{id}', [RoleController::class, 'destroy'])->whereNumber('id');
@@ -115,7 +114,6 @@ Route::prefix('v1')->group(function () {
         Route::post('invitations/{id}/resend', [TeamController::class, 'resend'])->whereNumber('id');
         Route::delete('invitations/{id}', [TeamController::class, 'revoke'])->whereNumber('id');
         Route::get('company', [CompanyController::class, 'show']);
-        Route::get('company/plan', [CompanyController::class, 'plan']);
         Route::put('company', [CompanyController::class, 'update']);
         Route::post('company/logo', [CompanyController::class, 'uploadLogo']);
         Route::delete('company/logo', [CompanyController::class, 'removeLogo']);

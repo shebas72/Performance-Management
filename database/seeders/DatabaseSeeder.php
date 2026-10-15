@@ -297,7 +297,10 @@ class DatabaseSeeder extends Seeder
         $this->command->info('   Company: Ministry of Digital Economy');
         $this->command->info('   KPIs:    12 strategic KPIs with 8 months of data');
 
-        $this->call(SuperAdminSeeder::class);
+        // Super admin exists only in the SaaS product (app/Saas is deleted from a standalone build).
+        if (\App\Support\AppMode::saas() && class_exists(\App\Saas\Seeders\SuperAdminSeeder::class)) {
+            $this->call(\App\Saas\Seeders\SuperAdminSeeder::class);
+        }
         $this->call(RolesSeeder::class);
     }
 }

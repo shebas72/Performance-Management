@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Department;
 use App\Models\Kpi;
 use App\Services\AccessScope;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -16,7 +16,7 @@ class DepartmentController extends CompanyResourceController
     protected string $model = Department::class;
     protected array $filterable = ['parent_id'];
 
-    public function __construct(private AccessScope $access, private PlanLimits $limits) {}
+    public function __construct(private AccessScope $access, private Limits $limits) {}
 
     protected function rules(): array
     {

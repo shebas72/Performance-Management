@@ -12,7 +12,7 @@ use App\Models\KpiEntry;
 use App\Models\KpiTarget;
 use App\Services\AccessScope;
 use App\Services\KpiCalculator;
-use App\Services\PlanLimits;
+use App\Services\Limits;
 use App\Services\Pdf\PdfContext;
 use App\Services\Pdf\PdfRenderer;
 use App\Services\TeamPerformanceService;
@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Storage;
 /**
  * GET /reports/pdf/{dashboard|objectives|departments|team-performance|kpis/{id}}?year=&month=&lang=en|ar
  *
- * The routes sit behind RequirePlanFeature:pdf_export. Each report is built from the same code as its on-screen page
+ * The routes sit behind RequireFeature:pdf_export. Each report is built from the same code as its on-screen page
  * (the dashboard controllers, TeamPerformanceService), so a user's department scope and the team-report visibility rules
  * apply to the PDF exactly as they do on screen.
  */
@@ -32,7 +32,7 @@ class PdfReportController extends Controller
 
     public function __construct(
         private PdfRenderer $renderer,
-        private PlanLimits $limits,
+        private Limits $limits,
         private AccessScope $access,
         private KpiCalculator $calc,
     ) {}
