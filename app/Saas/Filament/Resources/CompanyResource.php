@@ -14,6 +14,8 @@ use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use App\Saas\Models\Subscription;
+use Illuminate\Support\Facades\DB;
 
 class CompanyResource extends Resource
 {
@@ -62,7 +64,7 @@ class CompanyResource extends Resource
             Forms\Components\TextInput::make('fiscal_year_start')->required()->maxLength(255)->default('01-01'),
             Forms\Components\Toggle::make('is_active')->required(),
             // Plans and trials exist only in the SaaS product.
-            $saas ? Forms\Components\TextInput::make('plan')->required() : null,
+            // $saas ? Forms\Components\TextInput::make('plan')->required() : null,
             $saas ? Forms\Components\TextInput::make('app_mode')->required() : null,
             $saas ? Forms\Components\DateTimePicker::make('trial_ends_at') : null,
         ])));
@@ -80,7 +82,16 @@ class CompanyResource extends Resource
                 Tables\Columns\TextColumn::make('timezone')->searchable(),
                 Tables\Columns\TextColumn::make('default_language')->searchable(),
                 Tables\Columns\TextColumn::make('fiscal_year_start')->searchable(),
-                $saas ? Tables\Columns\TextColumn::make('plan') : null,
+                // $saas ? Tables\Columns\TextColumn::make('plan') : null,
+                $saas ? Tables\Columns\TextColumn::make('current_plan')
+    ->label('Current plan')
+    ->badge()
+    ->state(fn (Company $record) => self::currentSubscription($record)?->plan?->name ?? 'No plan')
+    ->color(fn (string $state) => $state === 'No plan' ? 'danger' : 'primary') : null,
+$saas ? Tables\Columns\TextColumn::make('plan_status')
+    ->label('Plan status')
+    ->badge()
+    ->state(fn (Company $record) => self::currentSubscription($record)?->status ?? '-') : null,
                 $saas ? Tables\Columns\TextColumn::make('app_mode') : null,
                 $saas ? Tables\Columns\TextColumn::make('trial_ends_at')->dateTime()->sortable() : null,
                 $saas ? Tables\Columns\TextColumn::make('registration')
@@ -104,6 +115,7 @@ class CompanyResource extends Resource
                 ]),
             ] : [])
             ->actions(array_values(array_filter([
+                $saas ? self::changePlanAction() : null,
                 $saas ? self::approveAction() : null,
                 $saas ? self::rejectAction() : null,
                 Tables\Actions\ViewAction::make(),
@@ -120,6 +132,76 @@ class CompanyResource extends Resource
     {
         return [UsersRelationManager::class];
     }
+
+    private static function currentSubscription(Company $company): ?Subscription
+{
+    return Subscription::with('plan')
+        ->where('company_id', $company->id)
+        ->whereNotIn('status', ['cancelled', 'expired'])
+        ->latest('id')
+        ->first();
+}
+
+/** Move a company to another plan (or restart its trial). The old subscription is kept as cancelled history. */
+private static function changePlanAction(): Tables\Actions\Action
+{
+    return Tables\Actions\Action::make('changePlan')
+        ->label('Change plan')
+        ->icon('heroicon-o-arrow-path')
+        ->color('primary')
+        ->modalHeading('Change plan')
+        ->fillForm(function (Company $record) {
+            $current = self::currentSubscription($record);
+
+            return [
+                'plan_id' => $current?->plan_id,
+                'status' => $current?->status === 'trialing' ? 'trialing' : 'active',
+                'billing_cycle' => $current?->billing_cycle ?? 'monthly',
+                'trial_days' => 14,
+            ];
+        })
+        ->form([
+            Forms\Components\Select::make('plan_id')
+                ->label('Plan')
+                ->options(fn () => Plan::orderBy('sort_order')->pluck('name', 'id'))
+                ->required()
+                ->native(false),
+            Forms\Components\Select::make('status')
+                ->options(['active' => 'Active', 'trialing' => 'Trial'])
+                ->required()
+                ->live()
+                ->native(false),
+            Forms\Components\TextInput::make('trial_days')
+                ->label('Trial days from today')
+                ->numeric()->minValue(1)->maxValue(365)
+                ->visible(fn (Forms\Get $get) => $get('status') === 'trialing'),
+            Forms\Components\Select::make('billing_cycle')
+                ->options(['monthly' => 'Monthly', 'yearly' => 'Yearly'])
+                ->required()
+                ->native(false),
+        ])
+        ->action(function (Company $record, array $data) {
+            DB::transaction(function () use ($record, $data) {
+                Subscription::where('company_id', $record->id)
+                    ->whereNotIn('status', ['cancelled', 'expired'])
+                    ->update(['status' => 'cancelled', 'cancelled_at' => now()]);
+
+                $trialEnds = $data['status'] === 'trialing' ? now()->addDays((int) ($data['trial_days'] ?? 14)) : null;
+
+                Subscription::create([
+                    'company_id' => $record->id,
+                    'plan_id' => $data['plan_id'],
+                    'status' => $data['status'],
+                    'billing_cycle' => $data['billing_cycle'],
+                    'trial_ends_at' => $trialEnds,
+                ]);
+
+                $record->forceFill(['trial_ends_at' => $trialEnds])->save();
+            });
+
+            Notification::make()->title('Plan changed')->success()->send();
+        });
+}
 
     /** Approve a sign-up: pick the plan and trial length; the organization is activated and the admin emailed. */
     private static function approveAction(): Tables\Actions\Action
