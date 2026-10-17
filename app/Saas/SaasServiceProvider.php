@@ -48,6 +48,10 @@ class SaasServiceProvider extends ServiceProvider
         // Company->subscription() lives here so the shared Company model never mentions SaaS classes.
         Company::resolveRelationUsing('subscription', fn (Company $company) => $company->hasOne(Subscription::class)->latestOfMany());
 
+                if ($this->app->runningInConsole()) {
+            $this->commands([\App\Saas\Console\ExpireSubscriptions::class]);
+        }
+
         if (! $this->app->routesAreCached()) {
             Route::middleware('api')->prefix('api')->group(__DIR__.'/routes/api.php');
         }
