@@ -34,6 +34,16 @@ class AuthController extends Controller
             throw ValidationException::withMessages(['email' => ['This account has been deactivated. Contact your company admin.']]);
         }
 
+        // SaaS: email not verified yet, organisation awaiting approval, rejected or suspended.
+if ($reason = \App\Support\LoginGate::reason($user)) {
+    return response()->json(['message' => $reason, 'code' => 'login_blocked'], 403);
+}
+
+        // SaaS: email not verified yet, organisation awaiting approval, rejected or suspended.
+        if ($reason = \App\Support\LoginGate::reason($user)) {
+            throw ValidationException::withMessages(['email' => [$reason]]);
+        }
+
         return response()->json($this->payload($user, $user->createToken('spa')->plainTextToken));
     }
 
@@ -85,6 +95,7 @@ class AuthController extends Controller
     {
         $langs = AppMode::saas() ? ['en', 'ar'] : (\App\Models\Company::query()->orderBy('id')->first()?->enabledLanguages() ?? ['en']);
 
-        return response()->json(['data' => ['languages' => $langs]]);
+        // "registration" tells the sign-in page whether to offer a Create account link (SaaS only).
+        return response()->json(['data' => ['languages' => $langs, 'mode' => AppMode::current(), 'registration' => AppMode::saas()]]);
     }
 }

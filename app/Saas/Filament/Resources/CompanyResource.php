@@ -4,7 +4,11 @@ namespace App\Saas\Filament\Resources;
 
 use App\Saas\Filament\Resources\CompanyResource\Pages;
 use App\Models\Company;
+use App\Saas\Filament\Resources\CompanyResource\RelationManagers\UsersRelationManager;
+use App\Saas\Models\Plan;
+use App\Saas\Services\TenantSignup;
 use App\Support\AppMode;
+use Filament\Notifications\Notification;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -15,7 +19,26 @@ class CompanyResource extends Resource
 {
     protected static ?string $model = Company::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-building-office-2';
+    protected static ?string $navigationGroup = 'Tenants';
+    protected static ?int $navigationSort = 1;
+
+    /** Number of sign-ups waiting for a decision, shown next to Companies in the sidebar. */
+    public static function getNavigationBadge(): ?string
+    {
+        try {
+            $count = Company::where('approval_status', 'pending')->count();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
+    }
 
     /** Standalone is one organisation, made by the installer: no adding or deleting companies. */
     public static function canCreate(): bool { return AppMode::saas(); }
@@ -60,13 +83,32 @@ class CompanyResource extends Resource
                 $saas ? Tables\Columns\TextColumn::make('plan') : null,
                 $saas ? Tables\Columns\TextColumn::make('app_mode') : null,
                 $saas ? Tables\Columns\TextColumn::make('trial_ends_at')->dateTime()->sortable() : null,
+                $saas ? Tables\Columns\TextColumn::make('registration')
+                    ->label('Registration')
+                    ->badge()
+                    ->state(fn (Company $record) => TenantSignup::label(TenantSignup::status($record)))
+                    ->color(fn (string $state) => match ($state) {
+                        'Approved' => 'success',
+                        'Rejected' => 'danger',
+                        default => 'warning',
+                    }) : null,
                 Tables\Columns\IconColumn::make('is_active')->boolean(),
                 Tables\Columns\TextColumn::make('created_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
             ])))
-            ->actions([
+            ->defaultSort('created_at', 'desc')
+            ->filters($saas ? [
+                Tables\Filters\SelectFilter::make('approval_status')->label('Registration')->options([
+                    'pending' => 'Pending (email or approval)',
+                    'approved' => 'Approved',
+                    'rejected' => 'Rejected',
+                ]),
+            ] : [])
+            ->actions(array_values(array_filter([
+                $saas ? self::approveAction() : null,
+                $saas ? self::rejectAction() : null,
                 Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make(),
-            ])
+            ])))
             ->bulkActions($saas ? [
                 Tables\Actions\BulkActionGroup::make([
                     Tables\Actions\DeleteBulkAction::make(),
@@ -76,7 +118,52 @@ class CompanyResource extends Resource
 
     public static function getRelations(): array
     {
-        return [];
+        return [UsersRelationManager::class];
+    }
+
+    /** Approve a sign-up: pick the plan and trial length; the organization is activated and the admin emailed. */
+    private static function approveAction(): Tables\Actions\Action
+    {
+        return Tables\Actions\Action::make('approve')
+            ->label('Approve')
+            ->icon('heroicon-o-check-badge')
+            ->color('success')
+            ->visible(fn (Company $record) => TenantSignup::status($record) === 'pending_approval')
+            ->modalHeading('Approve organization')
+            ->modalDescription('The organization becomes active and its admin is emailed. Choose the plan it starts on.')
+            ->form([
+                Forms\Components\Select::make('plan_id')
+                    ->label('Plan')
+                    ->options(fn () => Plan::where('is_active', true)->orderBy('sort_order')->pluck('name', 'id'))
+                    ->default(fn () => Plan::where('is_active', true)->orderBy('sort_order')->value('id'))
+                    ->required()
+                    ->native(false),
+                Forms\Components\TextInput::make('trial_days')
+                    ->label('Trial days')
+                    ->numeric()->minValue(0)->maxValue(365)->default(14)->required()
+                    ->helperText('0 starts an active subscription straight away, without a trial.'),
+            ])
+            ->action(function (Company $record, array $data) {
+                TenantSignup::approve($record, (int) $data['plan_id'], (int) $data['trial_days']);
+                Notification::make()->title('Organization approved')->success()->send();
+            });
+    }
+
+    private static function rejectAction(): Tables\Actions\Action
+    {
+        return Tables\Actions\Action::make('reject')
+            ->label('Reject')
+            ->icon('heroicon-o-x-circle')
+            ->color('danger')
+            ->visible(fn (Company $record) => in_array(TenantSignup::status($record), ['pending_approval', 'awaiting_email'], true))
+            ->modalHeading('Reject registration')
+            ->form([
+                Forms\Components\Textarea::make('reason')->label('Reason (shown to the applicant)')->maxLength(500),
+            ])
+            ->action(function (Company $record, array $data) {
+                TenantSignup::reject($record, $data['reason'] ?? null);
+                Notification::make()->title('Registration rejected')->success()->send();
+            });
     }
 
     public static function getPages(): array

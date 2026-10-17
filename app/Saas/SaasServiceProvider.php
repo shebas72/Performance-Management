@@ -42,6 +42,9 @@ class SaasServiceProvider extends ServiceProvider
 
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
 
+        // Sign-in is refused until the tenant's email is verified and the super admin approved the organisation.
+        \App\Support\LoginGate::register(fn (\App\Models\User $user) => \App\Saas\Services\TenantSignup::loginBlock($user));
+
         // Company->subscription() lives here so the shared Company model never mentions SaaS classes.
         Company::resolveRelationUsing('subscription', fn (Company $company) => $company->hasOne(Subscription::class)->latestOfMany());
 

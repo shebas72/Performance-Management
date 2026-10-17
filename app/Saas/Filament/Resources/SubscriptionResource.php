@@ -17,7 +17,9 @@ class SubscriptionResource extends Resource
 {
     protected static ?string $model = Subscription::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-arrow-path';
+    protected static ?string $navigationGroup = 'Billing';
+    protected static ?int $navigationSort = 2;
 
     public static function canAccess(): bool
 
