@@ -36,6 +36,8 @@ class SuperAdminPanelProvider extends PanelProvider
             ->id('super-admin')
             ->path('super-admin')
             ->login()
+            ->databaseNotifications()
+            ->databaseNotificationsPolling('30s')
             ->profile(Profile::class, isSimple: false)
             // Brand: name, logo, favicon and accent colour come from Platform > Settings.
             ->brandName(PlatformSetting::get('app_name', 'SPMS Super Admin'))

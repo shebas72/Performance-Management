@@ -101,6 +101,15 @@ class TenantSignup
             'email_verification_sent_at' => null,
         ])->save();
 
+                $company = Company::find($user->company_id);
+        AdminNotifier::send(
+            'Ready for approval: '.($company?->name ?? 'new organization'),
+            $user->name.' verified '.$user->email.'. Review and approve the organization.',
+            url('/super-admin/companies'),
+            'heroicon-o-check-badge',
+            'warning'
+        );
+
         return 'ok';
     }
 

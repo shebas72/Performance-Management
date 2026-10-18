@@ -45,6 +45,11 @@ class UpgradeRequestResource extends Resource
             ->defaultSort('created_at', 'desc')
             ->columns([
                 Tables\Columns\TextColumn::make('company.name')->label('Organization')->searchable(),
+                Tables\Columns\TextColumn::make('current_plan')
+    ->label('Current plan')
+    ->badge()
+    ->color('gray')
+    ->state(fn (UpgradeRequest $record) => app(BillingService::class)->current($record->company_id)?->plan?->name ?? 'No plan'),
                 Tables\Columns\TextColumn::make('plan.name')->label('Requested plan')->badge(),
                 Tables\Columns\TextColumn::make('billing_cycle')->label('Cycle'),
                 Tables\Columns\TextColumn::make('note')->limit(60)->wrap(),

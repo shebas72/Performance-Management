@@ -13,6 +13,8 @@ use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use App\Saas\Models\PlatformSetting;
+use Illuminate\Support\Facades\Crypt;
 
 /**
  * Plan changes and the Stripe and PayPal subscription calls, over plain HTTP (no extra packages).
@@ -22,18 +24,55 @@ class BillingService
 {
     public function currency(): string
     {
-        return strtoupper(config('billing.currency', 'USD'));
+        return strtoupper($this->cfg('currency', 'USD'));
     }
 
     /** Providers that can be offered right now. "manual" (ask the platform admin) is always there. */
+        /** Providers that can be offered right now: switched on in Platform > Settings and, for payments, with keys. */
     public function providers(): array
     {
         $list = [];
-        if (config('billing.stripe.secret')) $list[] = 'stripe';
-        if (config('billing.paypal.client_id') && config('billing.paypal.secret')) $list[] = 'paypal';
-        $list[] = 'manual';
+        if ($this->enabled('stripe') && $this->cfg('stripe.secret')) $list[] = 'stripe';
+        if ($this->enabled('paypal') && $this->cfg('paypal.client_id') && $this->cfg('paypal.secret')) $list[] = 'paypal';
+        if ($this->enabled('manual')) $list[] = 'manual';
 
         return $list;
+    }
+
+    private function enabled(string $provider): bool
+    {
+        return PlatformSetting::get($provider.'_enabled', '1') !== '0';
+    }
+
+    /** A setting from Platform > Settings (secrets are encrypted there); falls back to config/billing.php (.env). */
+    public function cfg(string $key, mixed $default = null): mixed
+    {
+        $map = [
+            'stripe.secret' => ['stripe_secret', true],
+            'stripe.webhook_secret' => ['stripe_webhook_secret', true],
+            'paypal.client_id' => ['paypal_client_id', false],
+            'paypal.secret' => ['paypal_secret', true],
+            'paypal.webhook_id' => ['paypal_webhook_id', false],
+            'paypal.mode' => ['paypal_mode', false],
+            'currency' => ['billing_currency', false],
+        ];
+
+        if (isset($map[$key])) {
+            [$name, $secret] = $map[$key];
+            $value = PlatformSetting::get($name);
+
+            if ($value !== null && $secret) {
+                try {
+                    $value = Crypt::decryptString($value);
+                } catch (\Throwable) {
+                    $value = null; // unreadable (for example after an APP_KEY change): fall back to .env
+                }
+            }
+
+            if ($value !== null && $value !== '') return $value;
+        }
+
+        return config('billing.'.$key, $default);
     }
 
     public function price(Plan $plan, string $cycle): float
@@ -112,7 +151,7 @@ class BillingService
     private function cancelAtProvider(Subscription $sub, bool $now): void
     {
         try {
-            if ($sub->stripe_subscription_id && config('billing.stripe.secret')) {
+            if ($sub->stripe_subscription_id && $this->cfg('stripe.secret')) {
                 $url = "https://api.stripe.com/v1/subscriptions/{$sub->stripe_subscription_id}";
 
                 if ($now) {
@@ -122,7 +161,7 @@ class BillingService
                 }
             }
 
-            if ($sub->paypal_subscription_id && config('billing.paypal.client_id')) {
+            if ($sub->paypal_subscription_id && $this->cfg('paypal.client_id')) {
                 $this->paypal()->post($this->paypalBase()."/v1/billing/subscriptions/{$sub->paypal_subscription_id}/cancel", ['reason' => 'Cancelled by customer']);
             }
         } catch (\Throwable $e) {
@@ -144,7 +183,7 @@ class BillingService
 
     private function stripe(): PendingRequest
     {
-        return Http::withToken(config('billing.stripe.secret'))->acceptJson();
+        return Http::withToken($this->cfg('stripe.secret'))->acceptJson();
     }
 
     /** @return string URL of the hosted Stripe Checkout page */
@@ -186,7 +225,7 @@ class BillingService
     /** Stripe signs every webhook; reject anything that does not verify (also old replays). */
     public function stripeVerify(string $payload, ?string $header): bool
     {
-        $secret = config('billing.stripe.webhook_secret');
+        $secret = $this->cfg('stripe.webhook_secret');
         if (! $secret || ! $header) return false;
 
         $time = null;
@@ -263,13 +302,13 @@ class BillingService
 
     private function paypalBase(): string
     {
-        return config('billing.paypal.mode') === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
+        return $this->cfg('paypal.mode') === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
     }
 
     private function paypal(): PendingRequest
     {
         $token = Cache::remember('paypal_access_token', 480, fn () => Http::asForm()
-            ->withBasicAuth(config('billing.paypal.client_id'), config('billing.paypal.secret'))
+            ->withBasicAuth($this->cfg('paypal.client_id'), $this->cfg('paypal.secret'))
             ->post($this->paypalBase().'/v1/oauth2/token', ['grant_type' => 'client_credentials'])
             ->throw()->json('access_token'));
 
@@ -356,7 +395,7 @@ class BillingService
 
     public function paypalVerify(array $headers, string $payload): bool
     {
-        $webhookId = config('billing.paypal.webhook_id');
+        $webhookId = $this->cfg('paypal.webhook_id');
         if (! $webhookId) return false;
 
         $get = fn (string $name) => $headers[strtolower($name)][0] ?? null;

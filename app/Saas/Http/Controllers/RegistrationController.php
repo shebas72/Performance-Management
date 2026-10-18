@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Role;
+use App\Saas\Services\AdminNotifier;
 
 /**
  * Public sign-up. A new company registers with its first admin, verifies the email address, and then waits
@@ -53,6 +54,14 @@ class RegistrationController extends Controller
         });
 
         TenantSignup::sendVerification($user);
+
+            AdminNotifier::send(
+            'New registration: '.$data['company_name'],
+            $data['name'].' ('.$user->email.') registered. Waiting for the email to be verified.',
+            url('/super-admin/companies'),
+            'heroicon-o-building-office-2',
+            'info'
+        );
 
         return response()->json([
             'message' => 'Registration received. Please check your email to verify your address; your organization will then be reviewed for approval.',

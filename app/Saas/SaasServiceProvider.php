@@ -40,6 +40,9 @@ class SaasServiceProvider extends ServiceProvider
             return;
         }
 
+                // SMTP saved in Platform > Settings overrides the .env mail config.
+        \App\Saas\Services\MailSettings::apply();
+
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
 
         // Sign-in is refused until the tenant's email is verified and the super admin approved the organisation.

@@ -10,6 +10,7 @@ use App\Saas\Models\UpgradeRequest;
 use App\Saas\Services\BillingService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use App\Saas\Services\AdminNotifier;
 
 /** The tenant admin's upgrade page: see plans, pay with Stripe or PayPal, or ask the platform admin to change the plan. */
 class BillingController extends Controller
@@ -100,6 +101,14 @@ class BillingController extends Controller
 
         $this->billing->activate($company, $plan, 'monthly');
 
+            AdminNotifier::send(
+            'Plan changed: '.$company->name,
+            'Switched to the free plan "'.$plan->name.'" by the tenant.',
+            url('/super-admin/companies'),
+            'heroicon-o-arrow-path',
+            'gray'
+        );
+
         return response()->json(['message' => 'Plan changed.']);
     }
 
@@ -115,6 +124,7 @@ class BillingController extends Controller
     public function requestUpgrade(Request $request)
     {
         $company = $this->company($request);
+        abort_unless(in_array('manual', $this->billing->providers(), true), 422, 'Upgrade requests are turned off.');
 
         $data = $request->validate([
             'plan_id' => ['required', Rule::exists('plans', 'id')->where('is_active', true)],
@@ -125,6 +135,21 @@ class BillingController extends Controller
         $row = UpgradeRequest::updateOrCreate(
             ['company_id' => $company->id, 'status' => 'pending'],
             $data + ['user_id' => $request->user()->id]
+        );
+
+                $plan = Plan::find($data['plan_id']);
+        $current = $this->billing->current($company->id);
+        $before = $current?->plan ? $this->billing->price($current->plan, $data['billing_cycle']) : 0.0;
+        $after = $this->billing->price($plan, $data['billing_cycle']);
+        $kind = $after > $before ? 'Upgrade' : ($after < $before ? 'Downgrade' : 'Plan change');
+
+        AdminNotifier::send(
+            "{$kind} request: {$company->name}",
+            ($current?->plan?->name ?? 'No plan').' to '.$plan->name.' ('.$data['billing_cycle'].')'
+                .(filled($data['note'] ?? null) ? '. Note: '.$data['note'] : ''),
+            url('/super-admin/upgrade-requests'),
+            'heroicon-o-arrow-trending-up',
+            'warning'
         );
 
         return response()->json(['data' => $row], 201);
