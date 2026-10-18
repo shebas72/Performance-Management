@@ -7,6 +7,7 @@ use App\Models\KpiEntry;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Services\Notifier;
 
 class KpiEntryService
 {
@@ -79,8 +80,22 @@ class KpiEntryService
         $key    = ['kpi_id' => $kpi->id, 'year' => $year, 'month' => $month];
         $before = KpiEntry::where($key)->first()?->only(KpiChangeLogger::ENTRY_FIELDS);
 
+        $wasBehind = KpiEntry::where($key)->value('status') === 'behind';
+
         $entry = KpiEntry::updateOrCreate($key, $attrs);
         $this->log->entrySaved($kpi, $before, $entry, $user->id);
+
+                if ($status === 'behind' && ! $wasBehind) {
+            Notifier::to(
+                Notifier::reviewers($kpi->company_id, $kpi->department_id === null ? null : (int) $kpi->department_id, $user->id),
+                'kpi_status',
+                'KPI behind target: '.$kpi->code,
+                $kpi->name.' reached '.round((float) $pct).'% of its target for '.$year.'-'.str_pad((string) $month, 2, '0', STR_PAD_LEFT).'.',
+                '/kpis/'.$kpi->id,
+                'danger',
+                'kpi_red:'.$kpi->id.':'.$year.'-'.$month   // once per KPI and month
+            );
+        }
 
         return $entry;
     }

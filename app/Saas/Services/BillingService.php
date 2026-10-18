@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use App\Saas\Models\PlatformSetting;
 use Illuminate\Support\Facades\Crypt;
+use App\Services\Notifier;
 
 /**
  * Plan changes and the Stripe and PayPal subscription calls, over plain HTTP (no extra packages).
@@ -281,9 +282,12 @@ class BillingService
                 $this->recordInvoice($sub->company_id, 'stripe', $obj['id'], ($obj['amount_paid'] ?? 0) / 100, $obj['currency'] ?? $this->currency(), $obj['invoice_pdf'] ?? null);
                 break;
 
+           
+
             case 'invoice.payment_failed':
                 $subId = $obj['subscription'] ?? ($obj['parent']['subscription_details']['subscription'] ?? null);
                 Subscription::where('stripe_subscription_id', $subId)->where('status', 'active')->update(['status' => 'past_due']);
+                $this->notifyPaymentFailed(Subscription::where('stripe_subscription_id', $subId)->first());
                 break;
 
             case 'customer.subscription.updated':
@@ -437,7 +441,9 @@ class BillingService
 
             case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
             case 'BILLING.SUBSCRIPTION.SUSPENDED':
-                Subscription::where('paypal_subscription_id', $res['id'] ?? '')->where('status', 'active')->update(['status' => 'past_due']);
+                
+                 Subscription::where('paypal_subscription_id', $res['id'] ?? '')->where('status', 'active')->update(['status' => 'past_due']);
+                $this->notifyPaymentFailed(Subscription::where('paypal_subscription_id', $res['id'] ?? '')->first());
                 break;
 
             case 'BILLING.SUBSCRIPTION.CANCELLED':
@@ -449,5 +455,17 @@ class BillingService
                 if ($sub) $this->end($sub);
                 break;
         }
+    }
+
+        private function notifyPaymentFailed(?Subscription $sub): void
+    {
+        if (! $sub) return;
+
+        Notifier::to(
+            Notifier::companyAdmins($sub->company_id), 'plan',
+            'Payment failed',
+            'We could not charge your last payment. Update your payment method to keep your plan.',
+            '/billing', 'danger', 'payment_failed:'.$sub->id.':'.now()->format('Y-m-d')
+        );
     }
 }

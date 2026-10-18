@@ -5,6 +5,7 @@ use App\Saas\Http\Controllers\RegistrationController;
 use Illuminate\Support\Facades\Route;
 use App\Saas\Http\Controllers\BillingController;
 use App\Saas\Http\Controllers\BillingWebhookController;
+use App\Saas\Http\Controllers\BannerController;
 
 /*
  * SaaS-only API routes. Loaded by App\Saas\SaasServiceProvider with the same "api" prefix and middleware
@@ -29,5 +30,6 @@ Route::prefix('v1')->group(function () {
         Route::post('billing/paypal/confirm', [BillingController::class, 'paypalConfirm']);
         Route::post('billing/request', [BillingController::class, 'requestUpgrade']);
         Route::post('billing/cancel', [BillingController::class, 'cancel']);
+        Route::get('banners', [BannerController::class, 'index']);
     });
 });

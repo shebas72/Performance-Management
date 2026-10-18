@@ -23,6 +23,7 @@ use App\Http\Controllers\Api\V1\KpiDeletionController;
 use App\Http\Middleware\RequireFeature;
 use App\Http\Middleware\RequirePermission;
 use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\NotificationController;
 
 
 Route::prefix('v1')->group(function () {
@@ -48,6 +49,12 @@ Route::prefix('v1')->group(function () {
             Route::get('departments', [DashboardController::class, 'departments']);
             Route::get('classification', [DashboardController::class, 'classification']);
         });
+
+        Route::get('notifications', [NotificationController::class, 'index']);
+        Route::post('notifications/read-all', [NotificationController::class, 'readAll']);
+        Route::post('notifications/{id}/read', [NotificationController::class, 'read']);
+        Route::get('notification-preferences', [NotificationController::class, 'preferences']);
+        Route::put('notification-preferences', [NotificationController::class, 'updatePreferences']);
 
 
 

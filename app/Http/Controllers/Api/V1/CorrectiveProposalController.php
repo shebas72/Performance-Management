@@ -10,6 +10,7 @@ use App\Services\AccessScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
+use App\Services\Notifier;
 
 /**
  * Corrective proposals for under-performing KPIs.
@@ -62,6 +63,15 @@ class CorrectiveProposalController extends Controller
             'status'        => 'pending',
         ])->save();
 
+            Notifier::to(
+            Notifier::reviewers($cid, $kpi->department_id === null ? null : (int) $kpi->department_id, $request->user()->id),
+            'proposals',
+            'New corrective proposal',
+            $request->user()->name.' proposed "'.$p->title.'" for KPI '.$kpi->code.'.',
+            '/analysis',
+            'info'
+        );
+
         return response()->json(['data' => $this->shape($p->load(['kpi:id,code,name,name_ar', 'submitter:id,name', 'reviewer:id,name']))], 201);
     }
 
@@ -102,6 +112,18 @@ class CorrectiveProposalController extends Controller
             'status'      => ['approve' => 'in_progress', 'reject' => 'rejected', 'complete' => 'completed'][$action],
             'reviewed_by' => $request->user()->id,
         ])->save();
+
+                $verb = ['approve' => 'approved', 'reject' => 'rejected', 'complete' => 'marked as completed'][$action];
+        if ($p->submitted_by && $p->submitted_by !== $request->user()->id) {
+            Notifier::to(
+                \App\Models\User::find($p->submitted_by),
+                'proposals',
+                'Your proposal was '.$verb,
+                '"'.$p->title.'" was '.$verb.' by '.$request->user()->name.'.',
+                '/analysis',
+                $action === 'reject' ? 'danger' : 'success'
+            );
+        }
 
         return response()->json(['data' => $this->shape($p->load(['kpi:id,code,name,name_ar', 'submitter:id,name', 'reviewer:id,name']))]);
     }
