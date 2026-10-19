@@ -71,11 +71,12 @@ class UpgradeRequestResource extends Resource
                     ->action(function (UpgradeRequest $record) {
                         app(BillingService::class)->activate($record->company, $record->plan, $record->billing_cycle, 'manual');
                         $record->forceFill(['status' => 'approved', 'decided_at' => now()])->save();
-                        Notifier::to(
+                                              Notifier::to(
                             \App\Models\User::find($record->user_id) ?: Notifier::companyAdmins($record->company_id), 'plan',
                             'Your plan request was approved',
-                            'Your organization is now on the "'.$record->plan->name.'" plan.',
-                            '/billing', 'success'
+                            'Your organization is now on the ":plan" plan.',
+                            '/billing', 'success', null,
+                            ['plan' => $record->plan->name]
                         );
                         Notification::make()->title('Plan changed')->success()->send();
                     }),
@@ -85,7 +86,7 @@ class UpgradeRequestResource extends Resource
                     ->form([Forms\Components\Textarea::make('decision_note')->label('Note (optional)')->maxLength(500)])
                     ->action(function (UpgradeRequest $record, array $data) {
                         $record->forceFill(['status' => 'rejected', 'decided_at' => now(), 'decision_note' => $data['decision_note'] ?? null])->save();
-                        Notifier::to(
+                                                Notifier::to(
                             \App\Models\User::find($record->user_id) ?: Notifier::companyAdmins($record->company_id), 'plan',
                             'Your plan request was not approved',
                             $data['decision_note'] ?? 'Please contact support for details.',

@@ -48,12 +48,13 @@ class RemindMissingActuals extends Command
 
                 if ($mine->isEmpty()) continue;
 
-                Notifier::to(
+                                Notifier::to(
                     $user, 'reminders',
-                    'Missing KPI values for '.$now->format('F'),
-                    $mine->count().' KPI(s) still have no actual value this month.',
+                    'Missing KPI values this month',
+                    ':count KPI(s) still have no actual value this month.',
                     '/kpi-entry', 'warning',
-                    'reminder:'.$now->year.'-'.$now->month
+                    'reminder:'.$now->year.'-'.$now->month,
+                    ['count' => $mine->count()]
                 );
                 $sent++;
             }

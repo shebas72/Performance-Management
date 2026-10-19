@@ -7,11 +7,13 @@ use App\Notifications\AppNotification;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Notification;
 
+
 /** One place to notify tenant users. A failure is logged and never breaks the action that triggered it. */
 class Notifier
 {
     /** @param iterable<User>|User|null $users */
-    public static function to(iterable|User|null $users, string $category, string $title, string $body, ?string $url = null, string $level = 'info', ?string $key = null): void
+   
+    public static function to(iterable|User|null $users, string $category, string $title, string $body, ?string $url = null, string $level = 'info', ?string $key = null, array $params = []): void
     {
         try {
             $users = $users instanceof User ? collect([$users]) : collect($users ?? []);
@@ -22,7 +24,8 @@ class Notifier
             }
 
             if ($users->isNotEmpty()) {
-                Notification::send($users->values(), new AppNotification($category, $title, $body, $url, $level, $key));
+                
+                Notification::send($users->values(), new AppNotification($category, $title, $body, $url, $level, $key, $params));
             }
         } catch (\Throwable $e) {
             report($e);

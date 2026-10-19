@@ -461,7 +461,7 @@ class BillingService
     {
         if (! $sub) return;
 
-        Notifier::to(
+                   Notifier::to(
             Notifier::companyAdmins($sub->company_id), 'plan',
             'Payment failed',
             'We could not charge your last payment. Update your payment method to keep your plan.',

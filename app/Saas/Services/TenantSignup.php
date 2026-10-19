@@ -48,7 +48,7 @@ class TenantSignup
         }
 
         if ($user->email_verification_token) {
-            return 'Please verify your email address first. Check your inbox for the verification link.';
+            return __('Please verify your email address first. Check your inbox for the verification link.');
         }
 
         $company = Company::find($user->company_id);
@@ -58,9 +58,11 @@ class TenantSignup
         }
 
         return match ($company->approval_status ?: 'approved') {
-            'pending' => 'Your email is verified. Your organization is waiting for approval; we will email you once it is approved.',
-            'rejected' => 'Your registration was not approved.'.($company->rejection_reason ? ' Reason: '.$company->rejection_reason : ''),
-            default => $company->is_active ? null : 'This organization has been suspended. Please contact support.',
+            'pending' => __('Your email is verified. Your organization is waiting for approval; we will email you once it is approved.'),
+            'rejected' => $company->rejection_reason
+                ? __('Your registration was not approved. Reason: :reason', ['reason' => $company->rejection_reason])
+                : __('Your registration was not approved.'),
+            default => $company->is_active ? null : __('This organization has been suspended. Please contact support.'),
         };
     }
 
@@ -73,13 +75,13 @@ class TenantSignup
             'email_verification_sent_at' => now(),
         ])->save();
 
-        $link = url('/api/v1/auth/verify-email/'.$token);
-
-        self::mail(
-            $user->email,
-            'Verify your email address',
-            "Hello {$user->name},\n\nThank you for registering. Please confirm your email address by opening this link (valid for ".self::VERIFY_HOURS." hours):\n\n{$link}\n\nAfter that, your organization will be reviewed and you will receive another email once it is approved.\n\nIf you did not register, you can ignore this message."
-        );
+        self::mail($user, 'Verify your email address', [
+            ['Hello :name,', ['name' => $user->name]],
+            ['Thank you for registering. Please confirm your email address by opening this link (valid for :hours hours):', ['hours' => self::VERIFY_HOURS]],
+            url('/api/v1/auth/verify-email/'.$token),
+            ['After that, your organization will be reviewed and you will receive another email once it is approved.'],
+            ['If you did not register, you can ignore this message.'],
+        ]);
     }
 
     /** @return string ok | expired | invalid */
@@ -101,7 +103,8 @@ class TenantSignup
             'email_verification_sent_at' => null,
         ])->save();
 
-                $company = Company::find($user->company_id);
+        // Tells the platform owner (super admin panel, English).
+        $company = Company::find($user->company_id);
         AdminNotifier::send(
             'Ready for approval: '.($company?->name ?? 'new organization'),
             $user->name.' verified '.$user->email.'. Review and approve the organization.',
@@ -137,11 +140,11 @@ class TenantSignup
         $login = rtrim(config('app.frontend_url', 'http://localhost:5173'), '/').'/login';
 
         foreach (User::where('company_id', $company->id)->where('is_active', true)->get() as $user) {
-            self::mail(
-                $user->email,
-                'Your organization has been approved',
-                "Hello {$user->name},\n\nGood news: {$company->name} has been approved. You can now sign in:\n\n{$login}"
-            );
+            self::mail($user, 'Your organization has been approved', [
+                ['Hello :name,', ['name' => $user->name]],
+                ['Good news: :company has been approved. You can now sign in:', ['company' => $company->name]],
+                $login,
+            ]);
         }
     }
 
@@ -154,19 +157,32 @@ class TenantSignup
         ])->save();
 
         foreach (User::where('company_id', $company->id)->get() as $user) {
-            self::mail(
-                $user->email,
-                'Your registration was not approved',
-                "Hello {$user->name},\n\nUnfortunately {$company->name} could not be approved.".($reason ? "\n\nReason: {$reason}" : '')
-            );
+            $lines = [
+                ['Hello :name,', ['name' => $user->name]],
+                ['Unfortunately :company could not be approved.', ['company' => $company->name]],
+            ];
+            if ($reason) {
+                $lines[] = ['Reason: :reason', ['reason' => $reason]];
+            }
+
+            self::mail($user, 'Your registration was not approved', $lines);
         }
     }
 
-    /** A failed mail must never break the request; it is reported to the log instead. */
-    private static function mail(string $to, string $subject, string $body): void
+    /**
+     * Sends a plain email in the recipient's language. Each line is either a plain string (a link) or
+     * [English text with :placeholders, params]. A failed mail never breaks the request; it is logged.
+     */
+    private static function mail(User $user, string $subject, array $lines): void
     {
         try {
-            Mail::raw($body, fn ($message) => $message->to($to)->subject($subject));
+            app()->withLocale($user->preferredLocale(), function () use ($user, $subject, $lines) {
+                $body = collect($lines)
+                    ->map(fn ($line) => is_array($line) ? __($line[0], $line[1] ?? []) : $line)
+                    ->implode("\n\n");
+
+                Mail::raw($body, fn ($message) => $message->to($user->email)->subject(__($subject)));
+            });
         } catch (\Throwable $e) {
             report($e);
         }

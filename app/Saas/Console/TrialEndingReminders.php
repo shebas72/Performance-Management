@@ -19,11 +19,14 @@ class TrialEndingReminders extends Command
 
         foreach ($due as $sub) {
             $days = max(0, (int) ceil(now()->diffInHours($sub->trial_ends_at, false) / 24));
-            Notifier::to(
+                       Notifier::to(
                 Notifier::companyAdmins($sub->company_id), 'plan',
                 'Your trial ends soon',
-                $days <= 0 ? 'Your trial ends today. Choose a plan to keep your data and limits.' : "Your trial ends in {$days} day(s). Choose a plan to keep your data and limits.",
-                '/billing', 'warning', 'trial_end:'.$sub->id
+                $days <= 0
+                    ? 'Your trial ends today. Choose a plan to keep your data and limits.'
+                    : 'Your trial ends in :days day(s). Choose a plan to keep your data and limits.',
+                '/billing', 'warning', 'trial_end:'.$sub->id,
+                ['days' => $days]
             );
         }
 

@@ -45,6 +45,7 @@ class RegistrationController extends Controller
                 'password'   => Hash::make($data['password']),
                 'role_key'   => 'admin',
                 'is_active'  => true,
+                'locale'     => app()->getLocale(),
             ])->save();
 
             Role::findOrCreate('admin');
@@ -64,9 +65,10 @@ class RegistrationController extends Controller
         );
 
         return response()->json([
-            'message' => 'Registration received. Please check your email to verify your address; your organization will then be reviewed for approval.',
+             'message' => __('Registration received. Please check your email to verify your address; your organization will then be reviewed for approval.'),
             'data' => ['status' => 'awaiting_email', 'email' => $user->email],
         ], 201);
+              
     }
 
     /** The link in the verification email. Verifies, then sends the person to the sign-in page with the outcome. */

@@ -21,7 +21,7 @@ class BillingController extends Controller
 
     private function company(Request $request): Company
     {
-        abort_unless($request->user()->hasPermission('settings.manage'), 403, 'You do not have permission to change the plan.');
+        abort_unless($request->user()->hasPermission('settings.manage'), 403, __('You do not have permission to change the plan.'));
 
         return Company::findOrFail($this->companyId($request));
     }
@@ -78,10 +78,10 @@ class BillingController extends Controller
             'provider' => ['required', Rule::in(['stripe', 'paypal'])],
         ]);
 
-        abort_unless(in_array($data['provider'], $this->billing->providers(), true), 422, 'This payment method is not available.');
+        abort_unless(in_array($data['provider'], $this->billing->providers(), true), 422, __('This payment method is not available.'));
 
         $plan = Plan::findOrFail($data['plan_id']);
-        abort_if($this->billing->price($plan, $data['billing_cycle']) <= 0, 422, 'This plan is free. Switch to it directly.');
+        abort_if($this->billing->price($plan, $data['billing_cycle']) <= 0, 422, __('This plan is free. Switch to it directly.'));
 
         $url = $data['provider'] === 'stripe'
             ? $this->billing->stripeCheckout($company, $request->user(), $plan, $data['billing_cycle'], $this->frontend('/billing?checkout=success'), $this->frontend('/billing?checkout=cancel'))
@@ -97,7 +97,7 @@ class BillingController extends Controller
         $data = $request->validate(['plan_id' => ['required', Rule::exists('plans', 'id')->where('is_active', true)]]);
         $plan = Plan::findOrFail($data['plan_id']);
 
-        abort_if($this->billing->price($plan, 'monthly') > 0, 422, 'This plan is not free.');
+        abort_if($this->billing->price($plan, 'monthly') > 0, 422, __('This plan is not free.'));
 
         $this->billing->activate($company, $plan, 'monthly');
 
@@ -109,7 +109,7 @@ class BillingController extends Controller
             'gray'
         );
 
-        return response()->json(['message' => 'Plan changed.']);
+        return response()->json(['message' => __('Plan changed.')]);
     }
 
     public function paypalConfirm(Request $request)
@@ -124,7 +124,7 @@ class BillingController extends Controller
     public function requestUpgrade(Request $request)
     {
         $company = $this->company($request);
-        abort_unless(in_array('manual', $this->billing->providers(), true), 422, 'Upgrade requests are turned off.');
+        abort_unless(in_array('manual', $this->billing->providers(), true), 422, __('Upgrade requests are turned off.'));
 
         $data = $request->validate([
             'plan_id' => ['required', Rule::exists('plans', 'id')->where('is_active', true)],
@@ -160,10 +160,10 @@ class BillingController extends Controller
         $company = $this->company($request);
         $sub = $this->billing->current($company->id);
 
-        abort_unless($sub && in_array($sub->provider, ['stripe', 'paypal'], true), 422, 'There is no automatic renewal to cancel. Contact the platform admin.');
+        abort_unless($sub && in_array($sub->provider, ['stripe', 'paypal'], true), 422, __('There is no automatic renewal to cancel. Contact the platform admin.'));
 
         if (! $sub->cancel_at_period_end) $this->billing->stopRenewal($sub);
 
-        return response()->json(['message' => 'Renewal cancelled. Your plan stays active until the end of the paid period.']);
+        return response()->json(['message' => __('Renewal cancelled. Your plan stays active until the end of the paid period.')]);
     }
 }

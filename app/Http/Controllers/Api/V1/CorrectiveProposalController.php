@@ -63,13 +63,23 @@ class CorrectiveProposalController extends Controller
             'status'        => 'pending',
         ])->save();
 
-            Notifier::to(
+        //     Notifier::to(
+        //     Notifier::reviewers($cid, $kpi->department_id === null ? null : (int) $kpi->department_id, $request->user()->id),
+        //     'proposals',
+        //     'New corrective proposal',
+        //     $request->user()->name.' proposed "'.$p->title.'" for KPI '.$kpi->code.'.',
+        //     '/analysis',
+        //     'info'
+        // );
+
+                Notifier::to(
             Notifier::reviewers($cid, $kpi->department_id === null ? null : (int) $kpi->department_id, $request->user()->id),
             'proposals',
             'New corrective proposal',
-            $request->user()->name.' proposed "'.$p->title.'" for KPI '.$kpi->code.'.',
+            ':user proposed ":title" for KPI :kpi.',
             '/analysis',
-            'info'
+            'info',
+            params: ['user' => $request->user()->name, 'title' => $p->title, 'kpi' => $kpi->code]
         );
 
         return response()->json(['data' => $this->shape($p->load(['kpi:id,code,name,name_ar', 'submitter:id,name', 'reviewer:id,name']))], 201);
@@ -113,15 +123,21 @@ class CorrectiveProposalController extends Controller
             'reviewed_by' => $request->user()->id,
         ])->save();
 
-                $verb = ['approve' => 'approved', 'reject' => 'rejected', 'complete' => 'marked as completed'][$action];
+                       $texts = [
+            'approve'  => ['Your proposal was approved', '":title" was approved by :user.'],
+            'reject'   => ['Your proposal was rejected', '":title" was rejected by :user.'],
+            'complete' => ['Your proposal was marked as completed', '":title" was marked as completed by :user.'],
+        ][$action];
+
         if ($p->submitted_by && $p->submitted_by !== $request->user()->id) {
             Notifier::to(
                 \App\Models\User::find($p->submitted_by),
                 'proposals',
-                'Your proposal was '.$verb,
-                '"'.$p->title.'" was '.$verb.' by '.$request->user()->name.'.',
+                $texts[0],
+                $texts[1],
                 '/analysis',
-                $action === 'reject' ? 'danger' : 'success'
+                $action === 'reject' ? 'danger' : 'success',
+                params: ['title' => $p->title, 'user' => $request->user()->name]
             );
         }
 

@@ -85,15 +85,16 @@ class KpiEntryService
         $entry = KpiEntry::updateOrCreate($key, $attrs);
         $this->log->entrySaved($kpi, $before, $entry, $user->id);
 
-                if ($status === 'behind' && ! $wasBehind) {
+                       if ($status === 'behind' && ! $wasBehind) {
             Notifier::to(
                 Notifier::reviewers($kpi->company_id, $kpi->department_id === null ? null : (int) $kpi->department_id, $user->id),
                 'kpi_status',
-                'KPI behind target: '.$kpi->code,
-                $kpi->name.' reached '.round((float) $pct).'% of its target for '.$year.'-'.str_pad((string) $month, 2, '0', STR_PAD_LEFT).'.',
+                'KPI behind target: :code',
+                ':name reached :pct% of its target for :period.',
                 '/kpis/'.$kpi->id,
                 'danger',
-                'kpi_red:'.$kpi->id.':'.$year.'-'.$month   // once per KPI and month
+                'kpi_red:'.$kpi->id.':'.$year.'-'.$month,
+                ['code' => $kpi->code, 'name' => $kpi->name, 'pct' => round((float) $pct), 'period' => $year.'-'.str_pad((string) $month, 2, '0', STR_PAD_LEFT)]
             );
         }
 

@@ -13,10 +13,12 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
+use Illuminate\Contracts\Translation\HasLocalePreference;
 
-#[Fillable(['name', 'email', 'password', 'avatar'])]
+#[Fillable(['name', 'email', 'password', 'avatar', 'locale'])]
 #[Hidden(['password', 'remember_token'])]
-class User extends Authenticatable implements FilamentUser, HasAvatar
+
+class User extends Authenticatable implements FilamentUser, HasAvatar, HasLocalePreference
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasRoles, HasFactory, Notifiable;
@@ -28,6 +30,12 @@ class User extends Authenticatable implements FilamentUser, HasAvatar
             'password' => 'hashed',
             'is_super_admin' => 'boolean',
         ];
+    }
+
+        /** The language emails and notifications to this person are written in. */
+    public function preferredLocale(): string
+    {
+        return in_array($this->locale, ['ar', 'en'], true) ? $this->locale : 'en';
     }
 
     /** Whether the user's role grants a permission (see App\Support\Permissions). */
